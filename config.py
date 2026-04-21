@@ -1,0 +1,90 @@
+from dataclasses import dataclass
+
+
+@dataclass
+class WorldConfig:
+    width: int = 1000
+    height: int = 1000
+    tile_size: int = 1
+
+
+@dataclass
+class SimulationConfig:
+    tick_rate: int = 60
+    simulation_speed: float = 1.0
+    initial_population: int = 200
+    max_population: int = 10000
+
+
+@dataclass
+class GenomeConfig:
+    genome_length: int = 16
+    mutation_rate: float = 0.1
+    mutation_strength: float = 0.1
+
+
+@dataclass
+class EnergyConfig:
+    base_energy: float = 100.0
+    energy_from_food: float = 15.0
+    reproduction_energy_cost: float = 0.3
+    child_energy_fraction: float = 0.35
+    predation_efficiency: float = 1.0
+    asexual_reproduction_energy_cost: float = 0.5
+    asexual_child_energy_fraction: float = 0.2
+
+
+@dataclass
+class ReproductionConfig:
+    asexual_cooldown: int = 250
+    sexual_cooldown: int = 150
+    max_births_per_tick: int = 5
+    density_radius: float = 40.0
+    density_max_neighbors: int = 8
+
+
+@dataclass
+class ScreenConfig:
+    width: int = 1280
+    height: int = 720
+    fps_cap: int = 60
+
+
+@dataclass
+class TileConfig:
+    water_regen: float = 0.10
+    land_regen: float = 0.08
+    forest_regen: float = 0.18
+    desert_regen: float = 0.01
+    water_max_food: float = 40.0
+    land_max_food: float = 50.0
+    forest_max_food: float = 80.0
+    desert_max_food: float = 20.0
+
+
+@dataclass
+class AbiogenesisConfig:
+    biomass_decay_rate: float = 0.005
+    biomass_threshold: float = 10.0
+    biomass_spawn_chance: float = 0.00003
+    lightning_chance: float = 0.0005
+    lightning_biomass_boost: float = 50.0
+    lightning_radius: int = 5
+
+
+@dataclass
+class SpatialHashConfig:
+    cell_size: int = 50
+
+
+@dataclass
+class Config:
+    world: WorldConfig = WorldConfig()
+    simulation: SimulationConfig = SimulationConfig()
+    genome: GenomeConfig = GenomeConfig()
+    energy: EnergyConfig = EnergyConfig()
+    screen: ScreenConfig = ScreenConfig()
+    tile: TileConfig = TileConfig()
+    spatial_hash: SpatialHashConfig = SpatialHashConfig()
+    abiogenesis: AbiogenesisConfig = AbiogenesisConfig()
+    reproduction: ReproductionConfig = ReproductionConfig()
