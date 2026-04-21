@@ -2,6 +2,7 @@ import numpy as np
 
 from core.ecs import System, EntityManager
 from core.entity_data import EntityData
+from utils.numba_kernels import aging_update_kernel, HAS_NUMBA
 from config import Config
 
 
@@ -20,6 +21,11 @@ class AgingSystem(System):
     def _update_soa(self) -> None:
         ed = self.entity_data
         n = ed.count
+
+        if HAS_NUMBA:
+            aging_update_kernel(ed.age, ed.max_age, ed.health, ed.alive, n)
+            return
+
         s = slice(0, n)
 
         alive = ed.alive[s]

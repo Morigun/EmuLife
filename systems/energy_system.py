@@ -3,6 +3,7 @@ import numpy as np
 from core.ecs import System, EntityManager
 from core.entity_data import EntityData
 from core.world import World
+from utils.numba_kernels import energy_update_kernel, HAS_NUMBA
 from config import Config
 
 
@@ -23,6 +24,17 @@ class EnergySystem(System):
         ed = self.entity_data
         ec = self.config.energy
         n = ed.count
+
+        if HAS_NUMBA:
+            energy_update_kernel(
+                ed.x, ed.y, ed.dx, ed.dy, ed.energy, ed.max_energy,
+                ed.metabolism, ed.size_gene, ed.diet_type, ed.habitat,
+                ed.efficiency, ed.alive,
+                w.food_values, w.tile_types,
+                n, w.width, w.height, dt, ec.energy_from_food,
+            )
+            return
+
         s = slice(0, n)
 
         alive = ed.alive[s]

@@ -44,6 +44,7 @@ class EntityData:
         self.b = np.zeros(self.MAX_ENTITIES, dtype=np.uint8)
         self.repro_type = np.zeros(self.MAX_ENTITIES, dtype=np.int8)
         self.habitat = np.zeros(self.MAX_ENTITIES, dtype=np.int8)
+        self.eids = np.full(self.MAX_ENTITIES, -1, dtype=np.int32)
 
         self.count: int = 0
         self.eid_to_idx: dict[int, int] = {}
@@ -102,6 +103,7 @@ class EntityData:
         self.b[idx] = int(genome.b_color * 255)
         self.repro_type[idx] = repro_type_val
         self.habitat[idx] = habitat_val
+        self.eids[idx] = eid
 
         self.eid_to_idx[eid] = idx
         self.idx_to_eid[idx] = eid
@@ -111,6 +113,7 @@ class EntityData:
         idx = self.eid_to_idx.pop(eid, None)
         if idx is not None:
             self.alive[idx] = False
+            self.eids[idx] = -1
             self._free.append(idx)
             del self.idx_to_eid[idx]
 
@@ -196,6 +199,7 @@ class EntityData:
             self.habitat[idx] = 1
 
             self.alive[idx] = True
+            self.eids[idx] = eid
             self.eid_to_idx[eid] = idx
             self.idx_to_eid[idx] = eid
 

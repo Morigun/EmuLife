@@ -1,6 +1,14 @@
 from __future__ import annotations
 
+import os
 import random
+import multiprocessing
+import struct
+from types import SimpleNamespace
+
+from utils.cpu_limit import limit_numba_threads, set_affinity, set_affinity_for_process
+
+limit_numba_threads()
 
 import numpy as np
 import pygame
@@ -30,10 +38,22 @@ from rendering.ui import UI
 from rendering.minimap import Minimap
 
 from components.position import Position
+from components.diet import DietType
+
+from utils.numba_kernels import compute_stats_kernel, HAS_NUMBA
+
+
+def _run_sim_worker(config, shared_buf_name, frame_counter, control_pipe):
+    from utils.cpu_limit import set_affinity
+    set_affinity()
+    from core.sim_worker import SimWorker
+    worker = SimWorker(config, shared_buf_name, frame_counter, control_pipe)
+    worker.run()
 
 
 class Simulation:
     def __init__(self) -> None:
+        n_cores = set_affinity()
         self.config = Config()
         self.logger = get_logger()
 
@@ -85,6 +105,10 @@ class Simulation:
         self._spawn_initial_population()
 
         self.entity_data.sync_from_ecs(self.em)
+
+        if HAS_NUMBA:
+            from utils.numba_kernels import warmup
+            warmup()
 
         self.logger.info("EmuLife initialized")
 
@@ -193,15 +217,18 @@ class Simulation:
 
     def _select_entity_at(self, wx: float, wy: float) -> None:
         best_id = None
-        best_dist_sq = 225.0
+        click_radius_world = 10.0 / self.camera.zoom
+        best_dist_sq = click_radius_world * click_radius_world
 
-        nearby = self.spatial_hash.query_nearby(wx, wy, 15.0)
+        query_radius = max(5.0, 15.0 / self.camera.zoom)
+        nearby = self.spatial_hash.query_nearby(wx, wy, query_radius)
+        ed = self.entity_data
         for eid in nearby:
-            pos = self.em.get_component(eid, Position)
-            if pos is None:
+            idx = ed.eid_to_idx.get(eid)
+            if idx is None or not ed.alive[idx]:
                 continue
-            dx = pos.x - wx
-            dy = pos.y - wy
+            dx = float(ed.x[idx]) - wx
+            dy = float(ed.y[idx]) - wy
             dist_sq = dx * dx + dy * dy
             if dist_sq < best_dist_sq:
                 best_dist_sq = dist_sq
@@ -260,7 +287,7 @@ class Simulation:
             self.renderer.render_selected(self.em, self.camera, self.ui.selected_entity, self.entity_data)
 
             self.ui.render_stats(self.em, fps, self.tick, self.sim_speed)
-            self.ui.render_selected_info(self.em)
+            self.ui.render_selected_info_soa(self.entity_data, self.ui.selected_entity)
             self.ui.render_help()
             self.minimap.render(self.world, self.camera, self.em, self.tick, self.entity_data)
 
@@ -271,8 +298,320 @@ class Simulation:
 
 
 def main() -> None:
-    sim = Simulation()
+    import sys
+    use_mp = "--mp" in sys.argv
+    if use_mp:
+        sim = SimulationMP()
+    else:
+        sim = Simulation()
     sim.run()
+
+
+class _SoadProxy:
+    def __init__(self, data: dict) -> None:
+        n = data["count"]
+        for key, val in data.items():
+            setattr(self, key, val)
+        self.count = n
+
+
+class SimulationMP:
+    def __init__(self) -> None:
+        self.config = Config()
+        self.logger = get_logger()
+
+        from core.shared_buffers import SharedEntityBuffer
+
+        self.shared_buf = SharedEntityBuffer(create=True)
+        self.frame_counter = multiprocessing.Value("i", 0)
+        parent_conn, child_conn = multiprocessing.Pipe()
+        self.control_pipe = parent_conn
+
+        self.sim_process = multiprocessing.Process(
+            target=_run_sim_worker,
+            args=(self.config, self.shared_buf.shm_name, self.frame_counter, child_conn),
+            daemon=True,
+        )
+
+        pygame.init()
+        self.screen = pygame.display.set_mode(
+            (self.config.screen.width, self.config.screen.height)
+        )
+        pygame.display.set_caption("EmuLife — Цифровая Генетическая Экосистема [MP]")
+        self.clock = pygame.time.Clock()
+
+        self.world = World(self.config)
+        self.camera = Camera(
+            x=self.config.world.width / 2,
+            y=self.config.world.height / 2,
+            zoom=1.0,
+            screen_width=self.config.screen.width,
+            screen_height=self.config.screen.height,
+        )
+
+        self.renderer = Renderer(self.screen, self.config)
+        self.ui = UI(self.screen, self.config)
+        self.minimap = Minimap(self.screen, self.config)
+
+        self.running = True
+        self.paused = False
+        self.sim_speed = self.config.simulation.simulation_speed
+        self.last_frame = 0
+        self.selected_entity: int | None = None
+        self._last_proxy: _SoadProxy | None = None
+
+        n_cores = set_affinity()
+
+        self.sim_process.start()
+
+        try:
+            set_affinity_for_process(self.sim_process.pid, n_cores)
+        except Exception:
+            pass
+
+        self.logger.info(f"EmuLife MP initialized ({n_cores}/{os.cpu_count()} cores)")
+
+    def _read_frame(self) -> _SoadProxy | None:
+        if self.frame_counter.value == self.last_frame:
+            return None
+        self.last_frame = self.frame_counter.value
+        data = self.shared_buf.read_into_arrays()
+        return _SoadProxy(data)
+
+    def _handle_events(self) -> None:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                self.running = False
+
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    self.running = False
+                elif event.key == pygame.K_SPACE:
+                    self.paused = not self.paused
+                    self.control_pipe.send({"cmd": "pause", "value": self.paused})
+                elif event.key == pygame.K_h:
+                    self.ui.show_stats = not self.ui.show_stats
+                elif event.key == pygame.K_m:
+                    self.minimap.visible = not self.minimap.visible
+                elif event.key == pygame.K_f:
+                    if self.selected_entity is not None:
+                        if self.camera.follow_entity == self.selected_entity:
+                            self.camera.follow_entity = None
+                        else:
+                            self.camera.follow_entity = self.selected_entity
+                elif event.key in (pygame.K_PLUS, pygame.K_EQUALS, pygame.K_KP_PLUS):
+                    self.sim_speed = min(10.0, self.sim_speed + 0.5)
+                    self.control_pipe.send({"cmd": "speed", "value": self.sim_speed})
+                elif event.key in (pygame.K_MINUS, pygame.K_KP_MINUS):
+                    self.sim_speed = max(0.5, self.sim_speed - 0.5)
+                    self.control_pipe.send({"cmd": "speed", "value": self.sim_speed})
+
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                if event.button == 1:
+                    wx, wy = self.camera.screen_to_world(event.pos[0], event.pos[1])
+                    self._select_entity_at(wx, wy)
+                elif event.button == 4:
+                    self.camera.zoom_at(1.15, event.pos[0], event.pos[1])
+                elif event.button == 5:
+                    self.camera.zoom_at(1.0 / 1.15, event.pos[0], event.pos[1])
+
+            elif event.type == pygame.MOUSEWHEEL:
+                mx, my = pygame.mouse.get_pos()
+                if event.y > 0:
+                    self.camera.zoom_at(1.15, mx, my)
+                elif event.y < 0:
+                    self.camera.zoom_at(1.0 / 1.15, mx, my)
+
+    def _select_entity_at(self, wx: float, wy: float) -> None:
+        proxy = self._last_proxy
+        if proxy is None:
+            new_proxy = self._read_frame()
+            if new_proxy is not None:
+                proxy = new_proxy
+                self._last_proxy = proxy
+            else:
+                return
+
+        n = proxy.count
+        if n == 0:
+            self.selected_entity = None
+            return
+
+        dx = proxy.x - wx
+        dy = proxy.y - wy
+        dist_sq = dx * dx + dy * dy
+        dist_sq[~proxy.alive] = 1e18
+        best_idx = int(np.argmin(dist_sq))
+
+        click_radius_world = 10.0 / self.camera.zoom
+        if dist_sq[best_idx] < click_radius_world * click_radius_world:
+            self.selected_entity = int(proxy.eids[best_idx])
+        else:
+            self.selected_entity = None
+            self.camera.follow_entity = None
+
+    def _handle_input(self, dt: float) -> None:
+        keys = pygame.key.get_pressed()
+        dx, dy = 0.0, 0.0
+        if keys[pygame.K_w] or keys[pygame.K_UP]:
+            dy -= 1
+        if keys[pygame.K_s] or keys[pygame.K_DOWN]:
+            dy += 1
+        if keys[pygame.K_a] or keys[pygame.K_LEFT]:
+            dx -= 1
+        if keys[pygame.K_d] or keys[pygame.K_RIGHT]:
+            dx += 1
+        if dx != 0 or dy != 0:
+            self.camera.follow_entity = None
+            self.camera.pan(dx, dy, dt)
+
+    def _render_stats_from_soa(self, proxy: _SoadProxy, fps: float, tick: int) -> None:
+        if not self.ui.show_stats:
+            return
+
+        n = proxy.count
+        if HAS_NUMBA:
+            herb, omni, pred = compute_stats_kernel(proxy.diet_type, proxy.alive, n)
+        else:
+            alive = proxy.alive
+            herb = int(np.sum(alive & (proxy.diet_type == 0)))
+            omni = int(np.sum(alive & (proxy.diet_type == 1)))
+            pred = int(np.sum(alive & (proxy.diet_type == 2)))
+        total = herb + omni + pred
+
+        lines = [
+            f"FPS: {fps:.0f}  Tick: {tick}  Speed: {self.sim_speed:.1f}x [MP]",
+            f"Total: {total}  Herb: {herb}  Omni: {omni}  Pred: {pred}",
+            f"Max pop: {self.config.simulation.max_population}",
+        ]
+
+        y = 5
+        for line in lines:
+            surf = self.ui.font_small.render(line, True, (255, 255, 255))
+            bg = pygame.Surface((surf.get_width() + 6, surf.get_height() + 2), pygame.SRCALPHA)
+            bg.fill((0, 0, 0, 160))
+            self.screen.blit(bg, (4, y))
+            self.screen.blit(surf, (7, y + 1))
+            y += 18
+
+    def _render_selected_from_soa(self, proxy: _SoadProxy) -> None:
+        if self.selected_entity is None:
+            return
+
+        eid_matches = np.where(proxy.eids[:proxy.count] == self.selected_entity)[0]
+        if len(eid_matches) == 0:
+            self.selected_entity = None
+            return
+
+        idx = int(eid_matches[0])
+        if not proxy.alive[idx]:
+            self.selected_entity = None
+            return
+
+        from utils.species_namer import get_species_name_from_soa_data, get_diet_name, get_repro_name, get_habitat_name
+
+        species = get_species_name_from_soa_data(
+            diet_type=int(proxy.diet_type[idx]),
+            repro_type=int(proxy.repro_type[idx]),
+            habitat=int(proxy.habitat[idx]),
+            size_gene=float(proxy.size_gene[idx]),
+            speed_gene=float(proxy.speed_gene[idx]),
+            aggression=float(proxy.aggression[idx]),
+        )
+
+        diet_name = get_diet_name(int(proxy.diet_type[idx]))
+        repro_name = get_repro_name(int(proxy.repro_type[idx]))
+        habitat_name = get_habitat_name(int(proxy.habitat[idx]))
+
+        lines = [
+            f"{species} #{self.selected_entity}",
+            f"Energy: {proxy.energy[idx]:.1f}/{proxy.max_energy[idx]:.1f}",
+            f"Health: {proxy.health[idx]:.1f}/{proxy.max_health[idx]:.1f}",
+            f"Age: {proxy.age[idx]}/{proxy.max_age[idx]}",
+            f"Diet: {diet_name}",
+            f"Repro: {repro_name}",
+            f"Habitat: {habitat_name}",
+            f"Aggression: {proxy.aggression[idx]:.2f}",
+            f"Vision: {proxy.vision[idx]:.1f}",
+            f"Metabolism: {proxy.metabolism[idx]:.2f}",
+            f"Pos: ({proxy.x[idx]:.0f}, {proxy.y[idx]:.0f})",
+        ]
+
+        panel_w = 250
+        panel_h = len(lines) * 18 + 10
+        panel_x = self.screen.get_width() - panel_w - 10
+        panel_y = 5
+
+        bg = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
+        bg.fill((0, 0, 0, 180))
+        self.screen.blit(bg, (panel_x, panel_y))
+
+        for i, line in enumerate(lines):
+            surf = self.ui.font_small.render(line, True, (255, 255, 200))
+            self.screen.blit(surf, (panel_x + 5, panel_y + 5 + i * 18))
+
+    def run(self) -> None:
+        proxy = None
+
+        while self.running:
+            real_dt = self.clock.tick(self.config.screen.fps_cap) / 1000.0
+            fps = self.clock.get_fps()
+
+            self._handle_events()
+            self._handle_input(real_dt)
+
+            new_proxy = self._read_frame()
+            if new_proxy is not None:
+                proxy = new_proxy
+                self._last_proxy = proxy
+                if self.camera.follow_entity is not None:
+                    follow_eid = self.camera.follow_entity
+                    eid_matches = np.where(proxy.eids[:proxy.count] == follow_eid)[0]
+                    if len(eid_matches) > 0:
+                        idx = int(eid_matches[0])
+                        if proxy.alive[idx]:
+                            self.camera.x = float(proxy.x[idx])
+                            self.camera.y = float(proxy.y[idx])
+                        else:
+                            self.camera.follow_entity = None
+                    else:
+                        self.camera.follow_entity = None
+
+            self.screen.fill((20, 20, 30))
+            self.renderer.render_world(self.world, self.camera)
+
+            if proxy is not None:
+                self.renderer.render_entities_from_soa(proxy, self.camera)
+
+                if self.selected_entity is not None:
+                    eid_matches = np.where(proxy.eids[:proxy.count] == self.selected_entity)[0]
+                    if len(eid_matches) > 0:
+                        idx = int(eid_matches[0])
+                        if proxy.alive[idx]:
+                            sx, sy = self.camera.world_to_screen(float(proxy.x[idx]), float(proxy.y[idx]))
+                            pygame.draw.circle(self.screen, (255, 255, 0), (int(sx), int(sy)), 15, 2)
+                        else:
+                            self.selected_entity = None
+                    else:
+                        self.selected_entity = None
+
+                tick = proxy.tick
+                self._render_stats_from_soa(proxy, fps, tick)
+                self._render_selected_from_soa(proxy)
+                self.minimap.render(self.world, self.camera, None, tick, proxy)
+            else:
+                self.ui.render_stats(EntityManager(), fps, 0, self.sim_speed)
+
+            self.ui.render_help()
+            pygame.display.flip()
+
+        self.control_pipe.send(None)
+        self.sim_process.join(timeout=5)
+        if self.sim_process.is_alive():
+            self.sim_process.terminate()
+        self.shared_buf.unlink()
+        pygame.quit()
+        self.logger.info("EmuLife MP stopped")
 
 
 if __name__ == "__main__":

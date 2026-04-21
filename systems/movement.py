@@ -3,6 +3,7 @@ import numpy as np
 from core.ecs import System, EntityManager
 from core.entity_data import EntityData
 from core.world import World
+from utils.numba_kernels import movement_update_kernel, HAS_NUMBA
 from config import Config
 
 
@@ -26,6 +27,17 @@ class MovementSystem(System):
         w: World = world
         ed = self.entity_data
         n = ed.count
+
+        if HAS_NUMBA:
+            moved, old_x, old_y = movement_update_kernel(
+                ed.x, ed.y, ed.dx, ed.dy, ed.habitat, ed.alive,
+                w.tile_types, n, w.width, w.height, dt,
+            )
+            self.moved_mask = moved
+            self.old_x = old_x
+            self.old_y = old_y
+            return
+
         s = slice(0, n)
 
         old_x = ed.x[s].copy()

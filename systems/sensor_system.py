@@ -9,6 +9,7 @@ from components.energy import Energy
 from components.sensor import Sensor, NearbyEntity
 from components.diet import Diet, DietType
 from utils.spatial_hash import SpatialHash
+from utils.numba_kernels import find_nearest_food_kernel, HAS_NUMBA
 from core.world import World
 from config import Config
 
@@ -125,6 +126,13 @@ class SensorSystem(System):
                 sensor_comp.food_cache_tick = self.tick
 
     def _find_nearest_food(self, world: World, x: float, y: float, radius: float, habitat_int: int = 1):
+        if HAS_NUMBA:
+            found, fx, fy = find_nearest_food_kernel(
+                world.food_values, world.tile_types,
+                x, y, radius, habitat_int, world.width, world.height,
+            )
+            return (fx, fy) if found else None
+
         from core.world import TileType
 
         step = 5

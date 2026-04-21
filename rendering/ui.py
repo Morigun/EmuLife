@@ -3,12 +3,19 @@ from __future__ import annotations
 import pygame
 
 from core.ecs import EntityManager
+from core.entity_data import EntityData
 from components.diet import DietType, Diet
 from components.energy import Energy
 from components.age import Age
 from components.genome_comp import GenomeComp
 from components.health import Health
 from config import Config
+from utils.species_namer import (
+    get_species_name,
+    get_diet_name,
+    get_repro_name,
+    get_habitat_name,
+)
 
 
 class UI:
@@ -102,6 +109,53 @@ class UI:
             lines.append(f"Size: {g.size:.2f} Speed: {g.speed:.2f}")
             lines.append(f"Vision: {g.vision:.2f} Aggro: {g.aggression:.2f}")
 
+        self._render_panel(lines)
+
+    def render_selected_info_soa(self, entity_data: EntityData, selected_eid: int | None) -> None:
+        if selected_eid is None:
+            return
+
+        idx = entity_data.eid_to_idx.get(selected_eid)
+        if idx is None:
+            self.selected_entity = None
+            return
+
+        if not entity_data.alive[idx]:
+            self.selected_entity = None
+            return
+
+        from utils.species_namer import get_species_name_from_soa_data
+
+        species = get_species_name_from_soa_data(
+            diet_type=int(entity_data.diet_type[idx]),
+            repro_type=int(entity_data.repro_type[idx]),
+            habitat=int(entity_data.habitat[idx]),
+            size_gene=float(entity_data.size_gene[idx]),
+            speed_gene=float(entity_data.speed_gene[idx]),
+            aggression=float(entity_data.aggression[idx]),
+        )
+
+        diet_name = get_diet_name(int(entity_data.diet_type[idx]))
+        repro_name = get_repro_name(int(entity_data.repro_type[idx]))
+        habitat_name = get_habitat_name(int(entity_data.habitat[idx]))
+
+        lines = [
+            f"{species} #{selected_eid}",
+            f"Energy: {entity_data.energy[idx]:.1f}/{entity_data.max_energy[idx]:.1f}",
+            f"Health: {entity_data.health[idx]:.1f}/{entity_data.max_health[idx]:.1f}",
+            f"Age: {entity_data.age[idx]}/{entity_data.max_age[idx]}",
+            f"Diet: {diet_name}",
+            f"Repro: {repro_name}",
+            f"Habitat: {habitat_name}",
+            f"Aggression: {entity_data.aggression[idx]:.2f}",
+            f"Vision: {entity_data.vision[idx]:.1f}",
+            f"Metabolism: {entity_data.metabolism[idx]:.2f}",
+            f"Pos: ({entity_data.x[idx]:.0f}, {entity_data.y[idx]:.0f})",
+        ]
+
+        self._render_panel(lines)
+
+    def _render_panel(self, lines: list[str]) -> None:
         panel_w = 250
         panel_h = len(lines) * 18 + 10
         panel_x = self.screen.get_width() - panel_w - 10
