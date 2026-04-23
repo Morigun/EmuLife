@@ -70,7 +70,10 @@ def create_organism(
     max_health = 30.0 + size_val * 10.0
     max_age_val = int(800 + size_val * 200)
 
-    child_energy = max_energy * energy_fraction
+    if diet == DietType.PREDATOR:
+        child_energy = max_energy * config.energy.predator_child_energy_fraction
+    else:
+        child_energy = max_energy * energy_fraction
 
     if repro_type == "asexual":
         shape = "diamond"
@@ -80,7 +83,10 @@ def create_organism(
         shape = "circle"
 
     if repro_type == "asexual":
-        cd = config.reproduction.asexual_cooldown
+        if diet == DietType.PREDATOR:
+            cd = 120
+        else:
+            cd = config.reproduction.asexual_cooldown
     else:
         cd = config.reproduction.sexual_cooldown
 
@@ -346,7 +352,10 @@ class ReproductionSystem(System):
 
     def _find_partner(self, eid: int, pos: Position, diet_type: DietType) -> int | None:
         entity_count = self.em.entity_count
-        search_radius = min(200.0, 30.0 + max(0.0, 100.0 - entity_count) * 2.0)
+        base_radius = min(200.0, 60.0 + max(0.0, 100.0 - entity_count) * 2.0)
+        if diet_type == DietType.PREDATOR:
+            base_radius = min(250.0, base_radius * 2.0)
+        search_radius = base_radius
         _nearby = self._nearby_set
         self.spatial_hash.query_nearby_excluding_into(pos.x, pos.y, search_radius, eid, _nearby)
         for nid in _nearby:

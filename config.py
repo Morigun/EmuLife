@@ -28,10 +28,12 @@ class EnergyConfig:
     base_energy: float = 100.0
     energy_from_food: float = 15.0
     reproduction_energy_cost: float = 0.3
-    child_energy_fraction: float = 0.35
-    predation_efficiency: float = 1.0
+    child_energy_fraction: float = 0.45
+    predation_efficiency: float = 1.5
     asexual_reproduction_energy_cost: float = 0.5
-    asexual_child_energy_fraction: float = 0.2
+    asexual_child_energy_fraction: float = 0.3
+    predator_child_energy_fraction: float = 0.70
+    blood_meal_fraction: float = 0.20
 
 
 @dataclass

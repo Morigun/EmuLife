@@ -71,7 +71,10 @@ class EntityData:
         max_energy = 50.0 + size_val * 10.0
         max_health = 30.0 + size_val * 10.0
         max_age_val = int(800 + size_val * 200)
-        child_energy = max_energy * energy_fraction
+        if diet == 2:
+            child_energy = max_energy * config.energy.predator_child_energy_fraction
+        else:
+            child_energy = max_energy * energy_fraction
 
         self.x[idx] = x
         self.y[idx] = y
@@ -91,7 +94,10 @@ class EntityData:
         self.efficiency[idx] = 0.8 + aggression * 0.2
         self.repro_threshold[idx] = repro_thresh
         if repro_type_val == 0:
-            cd = config.reproduction.asexual_cooldown
+            if diet == 2:
+                cd = 120
+            else:
+                cd = config.reproduction.asexual_cooldown
         else:
             cd = config.reproduction.sexual_cooldown
         self.repro_cooldown[idx] = cd

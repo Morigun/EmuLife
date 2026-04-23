@@ -61,19 +61,26 @@ class InteractionSystem(System):
                 dy = py - ed.y[n_idx]
                 dist_sq = dx * dx + dy * dy
 
-                if dist_sq > 9.0:
+                if dist_sq > 25.0:
                     continue
 
                 processed.add(pair)
                 n_diet_int = int(ed.diet_type[n_idx])
 
-                damage_mult = 15.0 if diet_int == 2 else 5.0
+                damage_mult = 25.0 if diet_int == 2 else 5.0
                 valid_target = (diet_int == 2 and n_diet_int != 2) or (diet_int == 1 and n_diet_int == 0)
                 if not valid_target:
                     continue
 
                 damage = raw_size * aggression * damage_mult * dt
                 ed.health[n_idx] -= damage
+
+                if diet_int == 2:
+                    blood_meal = damage * self.config.energy.blood_meal_fraction
+                    ed.energy[idx] = min(float(ed.max_energy[idx]) * 1.5, float(ed.energy[idx]) + blood_meal)
+                    a_energy = self.em.get_component(eid, Energy)
+                    if a_energy:
+                        a_energy.current = float(ed.energy[idx])
 
                 n_health = self.em.get_component(nid, Health)
                 if n_health:
@@ -84,7 +91,8 @@ class InteractionSystem(System):
                     if diet_int == 1:
                         eff *= 0.5
                     gain = float(ed.energy[n_idx]) * eff
-                    ed.energy[idx] = min(float(ed.max_energy[idx]), float(ed.energy[idx]) + gain)
+                    kill_bonus = 30.0 if diet_int == 2 else 0.0
+                    ed.energy[idx] = min(float(ed.max_energy[idx]) * 1.5, float(ed.energy[idx]) + gain + kill_bonus)
                     n_energy = self.em.get_component(nid, Energy)
                     if n_energy:
                         n_energy.current = float(ed.energy[n_idx])
@@ -133,7 +141,7 @@ class InteractionSystem(System):
                 dy = pos.y - npos.y
                 dist = math.sqrt(dx * dx + dy * dy)
 
-                if dist > 3.0:
+                if dist > 5.0:
                     continue
 
                 processed.add(pair)
@@ -143,16 +151,22 @@ class InteractionSystem(System):
                     if n_diet and n_diet.diet_type != DietType.PREDATOR:
                         n_health = self.em.get_component(nid, Health)
                         if n_health:
-                            damage = size * aggression * 15.0 * dt
+                            damage = size * aggression * 25.0 * dt
                             n_health.current -= damage
                             if self.entity_data is not None:
                                 n_idx = self.entity_data.eid_to_idx.get(nid)
                                 if n_idx is not None:
                                     self.entity_data.health[n_idx] = n_health.current
+                            blood_meal = damage * self.config.energy.blood_meal_fraction
+                            energy.current = min(energy.max_value * 1.5, energy.current + blood_meal)
+                            if self.entity_data is not None:
+                                a_idx = self.entity_data.eid_to_idx.get(eid)
+                                if a_idx is not None:
+                                    self.entity_data.energy[a_idx] = energy.current
                             if n_health.current <= 0:
                                 n_energy = self.em.get_component(nid, Energy)
                                 gain = (n_energy.current * self.config.energy.predation_efficiency) if n_energy else 0
-                                energy.current = min(energy.max_value, energy.current + gain)
+                                energy.current = min(energy.max_value * 1.5, energy.current + gain + 30.0)
                                 if self.entity_data is not None:
                                     a_idx = self.entity_data.eid_to_idx.get(eid)
                                     if a_idx is not None:
@@ -171,7 +185,7 @@ class InteractionSystem(System):
                             if n_health.current <= 0:
                                 n_energy = self.em.get_component(nid, Energy)
                                 gain = (n_energy.current * self.config.energy.predation_efficiency * 0.5) if n_energy else 0
-                                energy.current = min(energy.max_value, energy.current + gain)
+                                energy.current = min(energy.max_value * 1.5, energy.current + gain)
                                 if self.entity_data is not None:
                                     a_idx = self.entity_data.eid_to_idx.get(eid)
                                     if a_idx is not None:

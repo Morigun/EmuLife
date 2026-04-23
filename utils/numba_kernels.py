@@ -66,6 +66,7 @@ def find_nearest_food_kernel(food_values, tile_types, x, y, radius, habitat_int,
 def energy_update_kernel(
     x, y, dx_arr, dy_arr, energy, max_energy, metabolism, size_gene,
     diet_type, habitat, efficiency, alive,
+    biomass,
     food_values, tile_types, n, width, height, dt, energy_from_food
 ):
     total_tiles = width * height
@@ -77,7 +78,18 @@ def energy_update_kernel(
         cost = metabolism[i] * (0.5 + raw_size) * dt
         speed = (dx_arr[i] ** 2 + dy_arr[i] ** 2) ** 0.5
         cost += speed * raw_size * 0.5 * dt
+        if diet_type[i] == 2:
+            cost = cost * 0.5
         energy[i] -= cost
+
+        if diet_type[i] == 2:
+            ix = min(max(int(x[i]), 0), width - 1)
+            iy = min(max(int(y[i]), 0), height - 1)
+            bio = biomass[iy, ix]
+            if bio > 2.0:
+                scav = min(bio * 0.05, 3.0) * dt
+                energy[i] += scav
+                biomass[iy, ix] -= scav
 
     entity_count = np.zeros(total_tiles, dtype=np.float32)
     for i in range(n):
@@ -125,8 +137,10 @@ def energy_update_kernel(
                     food_values[iy, ix] = 0.0
 
     for i in range(n):
-        if alive[i] and energy[i] > max_energy[i]:
-            energy[i] = max_energy[i]
+        if alive[i]:
+            cap = max_energy[i] * 1.5 if diet_type[i] == 2 else max_energy[i]
+            if energy[i] > cap:
+                energy[i] = cap
 
 
 @njit(parallel=True, cache=True)
@@ -219,6 +233,7 @@ if HAS_NUMBA:
         max_e = np.ones(n, dtype=np.float32) * 200.0
         food = np.ones((10, 10), dtype=np.float32) * 50.0
         tiles = np.ones((10, 10), dtype=np.int8)
+        bio_arr = np.zeros((10, 10), dtype=np.float32)
         metab = np.ones(n, dtype=np.float32)
         size_g = np.ones(n, dtype=np.float32) * 5.0
         eff = np.ones(n, dtype=np.float32)
@@ -232,6 +247,7 @@ if HAS_NUMBA:
             f32.copy(), f32.copy(), dx.copy(), dy.copy(),
             energy.copy(), max_e.copy(), metab.copy(), size_g.copy(),
             i8.copy(), i8.copy(), eff.copy(), bool_arr.copy(),
+            bio_arr.copy(),
             food.copy(), tiles.copy(), n, 10, 10, 1.0, 15.0,
         )
 

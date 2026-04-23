@@ -11,24 +11,27 @@ from components.diet import Diet, DietType
 from components.genome_comp import GenomeComp
 from components.reproduction import Reproduction
 from core.world import World
+from utils.spatial_hash import SpatialHash
 from config import Config
 
 STAGGER_BATCHES = 2
 
 
 class BehaviorSystem(System):
-    def __init__(self, entity_manager: EntityManager, config: Config, entity_data: EntityData = None) -> None:
+    def __init__(self, entity_manager: EntityManager, config: Config, entity_data: EntityData = None, spatial_hash: SpatialHash = None) -> None:
         self.em = entity_manager
         self.config = config
         self.entity_data = entity_data
+        self.spatial_hash = spatial_hash
         self.tick = 0
+        self._scent_set: set[int] = set()
 
     def update(self, world: object, dt: float) -> None:
         self.tick += 1
         if self.entity_data is not None:
             self._update_staggered(world, dt)
         else:
-            self._update_ecs()
+            self._update_ecs(world)
 
     def _update_staggered(self, world: object, dt: float) -> None:
         ed = self.entity_data
@@ -57,8 +60,14 @@ class BehaviorSystem(System):
 
             if action == "flee":
                 target_dx, target_dy = self._flee_soa(idx, sensor, ed)
+                if target_dx == 0.0 and target_dy == 0.0:
+                    target_dx = random.uniform(-1, 1)
+                    target_dy = random.uniform(-1, 1)
             elif action == "hunt":
                 target_dx, target_dy = self._hunt_soa(idx, sensor, ed)
+                if target_dx == 0.0 and target_dy == 0.0:
+                    target_dx = random.uniform(-1, 1)
+                    target_dy = random.uniform(-1, 1)
             elif action == "reproduce":
                 target_dx, target_dy = self._seek_mate_soa(idx, eid, sensor, ed)
                 if target_dx == 0.0 and target_dy == 0.0:
@@ -70,8 +79,20 @@ class BehaviorSystem(System):
                     target_dx = random.uniform(-1, 1)
                     target_dy = random.uniform(-1, 1)
             else:
-                target_dx = random.uniform(-1, 1)
-                target_dy = random.uniform(-1, 1)
+                diet_int = int(ed.diet_type[idx])
+                if diet_int == 2 and self.spatial_hash is not None:
+                    scent_dx, scent_dy = self._scent_hunt(idx, eid, ed, px, py)
+                    if scent_dx != 0.0 or scent_dy != 0.0:
+                        target_dx, target_dy = scent_dx, scent_dy
+                    else:
+                        target_dx = random.uniform(-1, 1)
+                        target_dy = random.uniform(-1, 1)
+                else:
+                    target_dx = random.uniform(-1, 1)
+                    target_dy = random.uniform(-1, 1)
+
+            if action == "hunt":
+                max_speed *= 2.0
 
             if target_dx != 0 or target_dy != 0:
                 mag = math.sqrt(target_dx ** 2 + target_dy ** 2)
@@ -92,11 +113,9 @@ class BehaviorSystem(System):
         diet_int = int(ed.diet_type[idx])
 
         if diet_int == 2:
-            for nb in sensor.nearby_entities[:3]:
+            for nb in sensor.nearby_entities[:8]:
                 if nb.diet_type is not None and nb.diet_type != DietType.PREDATOR:
-                    if low_energy:
-                        return "hunt"
-                    break
+                    return "hunt"
 
         if diet_int in (0, 1):
             for nb in sensor.nearby_entities[:5]:
@@ -104,13 +123,15 @@ class BehaviorSystem(System):
                     return "flee"
 
         if low_energy:
-            return "eat"
+            if diet_int != 2:
+                return "eat"
 
         repro_type_int = int(ed.repro_type[idx])
         if repro_type_int == 1:
             repro_cooldown = ed.repro_cooldown[idx]
             if repro_cooldown <= 0:
-                if ed.energy[idx] > ed.max_energy[idx] * 0.8:
+                repro_threshold = float(ed.repro_threshold[idx]) * ed.max_energy[idx]
+                if ed.energy[idx] > repro_threshold:
                     return "reproduce"
 
         return "wander"
@@ -160,7 +181,28 @@ class BehaviorSystem(System):
                         return ed.x[n_idx] - ed.x[idx], ed.y[n_idx] - ed.y[idx]
         return 0.0, 0.0
 
-    def _update_ecs(self) -> None:
+    def _scent_hunt(self, idx, eid, ed, px, py):
+        scent_radius = 150.0
+        scent_set = self._scent_set
+        self.spatial_hash.query_nearby_excluding_into(px, py, scent_radius, eid, scent_set)
+        best_dist_sq = 1e18
+        best_dx, best_dy = 0.0, 0.0
+        for nid in scent_set:
+            n_idx = ed.eid_to_idx.get(nid)
+            if n_idx is None or not ed.alive[n_idx]:
+                continue
+            nd = int(ed.diet_type[n_idx])
+            if nd == 2:
+                continue
+            ddx = float(ed.x[n_idx]) - px
+            ddy = float(ed.y[n_idx]) - py
+            dsq = ddx * ddx + ddy * ddy
+            if dsq < best_dist_sq:
+                best_dist_sq = dsq
+                best_dx, best_dy = ddx, ddy
+        return best_dx, best_dy
+
+    def _update_ecs(self, world: object) -> None:
         for eid in self.em.get_entities_with(Position, Velocity, Energy, Sensor):
             pos = self.em.get_component(eid, Position)
             vel = self.em.get_component(eid, Velocity)
@@ -178,10 +220,18 @@ class BehaviorSystem(System):
             target_dx, target_dy = 0.0, 0.0
             action = self._decide(eid, energy, sensor, diet, repro, genome_comp)
 
+            speed_mult = 2.0 if action == "hunt" else 1.0
+
             if action == "flee":
                 target_dx, target_dy = self._flee(pos, sensor)
+                if target_dx == 0.0 and target_dy == 0.0:
+                    target_dx = random.uniform(-1, 1)
+                    target_dy = random.uniform(-1, 1)
             elif action == "hunt":
                 target_dx, target_dy = self._hunt(pos, sensor, eid)
+                if target_dx == 0.0 and target_dy == 0.0:
+                    target_dx = random.uniform(-1, 1)
+                    target_dy = random.uniform(-1, 1)
             elif action == "reproduce":
                 target_dx, target_dy = self._seek_mate(pos, sensor, eid, diet)
             elif action == "eat":
@@ -190,8 +240,16 @@ class BehaviorSystem(System):
                     target_dx = random.uniform(-1, 1)
                     target_dy = random.uniform(-1, 1)
             else:
-                target_dx = random.uniform(-1, 1)
-                target_dy = random.uniform(-1, 1)
+                if diet and diet.diet_type == DietType.PREDATOR and self.spatial_hash is not None:
+                    scent_dx, scent_dy = self._scent_hunt_ecs(pos, eid)
+                    if scent_dx != 0.0 or scent_dy != 0.0:
+                        target_dx, target_dy = scent_dx, scent_dy
+                    else:
+                        target_dx = random.uniform(-1, 1)
+                        target_dy = random.uniform(-1, 1)
+                else:
+                    target_dx = random.uniform(-1, 1)
+                    target_dy = random.uniform(-1, 1)
 
             if target_dx != 0 or target_dy != 0:
                 mag = math.sqrt(target_dx ** 2 + target_dy ** 2)
@@ -199,8 +257,29 @@ class BehaviorSystem(System):
                     target_dx /= mag
                     target_dy /= mag
 
-            vel.dx = target_dx * max_speed
-            vel.dy = target_dy * max_speed
+            vel.dx = target_dx * max_speed * speed_mult
+            vel.dy = target_dy * max_speed * speed_mult
+
+    def _scent_hunt_ecs(self, pos, eid):
+        scent_radius = 150.0
+        scent_set = self._scent_set
+        self.spatial_hash.query_nearby_excluding_into(pos.x, pos.y, scent_radius, eid, scent_set)
+        best_dist_sq = 1e18
+        best_dx, best_dy = 0.0, 0.0
+        for nid in scent_set:
+            n_diet = self.em.get_component(nid, Diet)
+            if n_diet is None or n_diet.diet_type == DietType.PREDATOR:
+                continue
+            n_pos = self.em.get_component(nid, Position)
+            if n_pos is None:
+                continue
+            ddx = n_pos.x - pos.x
+            ddy = n_pos.y - pos.y
+            dsq = ddx * ddx + ddy * ddy
+            if dsq < best_dist_sq:
+                best_dist_sq = dsq
+                best_dx, best_dy = ddx, ddy
+        return best_dx, best_dy
 
     def _max_speed(self, genome_comp: GenomeComp | None) -> float:
         if genome_comp and genome_comp.genome:
@@ -211,15 +290,9 @@ class BehaviorSystem(System):
         low_energy = energy.current < energy.max_value * 0.3
 
         if diet and diet.diet_type == DietType.PREDATOR:
-            for nb in sensor.nearby_entities[:3]:
+            for nb in sensor.nearby_entities[:8]:
                 if nb.diet_type is not None and nb.diet_type != DietType.PREDATOR:
-                    if low_energy:
-                        return "hunt"
-                    break
-
-            for nb in sensor.nearby_entities[:3]:
-                if nb.diet_type == DietType.PREDATOR and nb.eid != eid:
-                    pass
+                    return "hunt"
 
         if diet and diet.diet_type in (DietType.HERBIVORE, DietType.OMNIVORE):
             for nb in sensor.nearby_entities[:5]:
@@ -227,10 +300,12 @@ class BehaviorSystem(System):
                     return "flee"
 
         if low_energy:
-            return "eat"
+            if diet and diet.diet_type != DietType.PREDATOR:
+                return "eat"
 
         if repro and repro.repro_type != "asexual" and repro.cooldown <= 0:
-            if energy.current > energy.max_value * 0.8:
+            repro_threshold = repro.threshold * energy.max_value
+            if energy.current > repro_threshold:
                 return "reproduce"
 
         return "wander"

@@ -82,7 +82,7 @@ class Simulation:
 
         self.systems = [
             SensorSystem(self.em, self.spatial_hash, self.config, self.entity_data),
-            BehaviorSystem(self.em, self.config, self.entity_data),
+            BehaviorSystem(self.em, self.config, self.entity_data, self.spatial_hash),
             self.movement_system,
             InteractionSystem(self.em, self.config, self.spatial_hash, self.entity_data),
             EnergySystem(self.em, self.config, self.entity_data),

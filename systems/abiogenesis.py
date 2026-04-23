@@ -9,6 +9,7 @@ from core.world import World
 from core.genome import Genome
 from core.entity_data import EntityData
 from utils.spatial_hash import SpatialHash
+from utils.numba_kernels import compute_stats_kernel, HAS_NUMBA
 from config import Config
 
 
@@ -30,6 +31,31 @@ class AbiogenesisSystem(System):
         w: World = world
         ac = self.config.abiogenesis
         self.lightning_events.clear()
+
+        if self.em.entity_count >= self.config.simulation.max_population:
+            return
+
+        ed = self.entity_data
+        pred_count = 0
+        if ed is not None:
+            n = ed.count
+            if HAS_NUMBA:
+                _, _, pred_count = compute_stats_kernel(ed.diet_type, ed.alive, n)
+            else:
+                pred_count = int(np.sum(ed.alive[:n] & (ed.diet_type[:n] == 2)))
+
+            if pred_count <= 2 and random.random() < 0.005:
+                for attempt in range(50):
+                    rand_idx = random.randint(0, n - 1)
+                    if ed.alive[rand_idx] and ed.diet_type[rand_idx] != 2:
+                        lx = float(ed.x[rand_idx]) + random.uniform(-30, 30)
+                        ly = float(ed.y[rand_idx]) + random.uniform(-30, 30)
+                        lx = max(0.0, min(float(w.width - 1), lx))
+                        ly = max(0.0, min(float(w.height - 1), ly))
+                        if w.walkable_mask[int(ly), int(lx)]:
+                            self._spawn_organism(w, lx, ly, True, force_predator=True)
+                            self.lightning_events.append((int(lx), int(ly)))
+                            break
 
         if self.em.entity_count >= self.config.simulation.max_population:
             return
@@ -61,16 +87,21 @@ class AbiogenesisSystem(System):
                     self.lightning_events.append((lx, ly))
                     break
 
-    def _spawn_organism(self, w: World, x: float, y: float, walkable: bool) -> None:
+    def _spawn_organism(self, w: World, x: float, y: float, walkable: bool, force_predator: bool = False) -> None:
         from systems.reproduction import create_organism
 
         genome = Genome.random_instance(self.config)
         if not walkable:
             genome.genes[11] = random.random() * 0.33
+        if force_predator:
+            genome.genes[4] = 0.66 + random.random() * 0.34
+            genome.genes[6] = max(0.4, genome.aggression)
+
+        energy_fraction = 0.6 if force_predator else 0.3
 
         eid = create_organism(
             self.em, genome, x, y, self.config,
-            energy_fraction=0.3,
+            energy_fraction=energy_fraction,
             parent_energy_sum=100.0,
             entity_data=self.entity_data,
         )

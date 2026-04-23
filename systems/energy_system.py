@@ -30,6 +30,7 @@ class EnergySystem(System):
                 ed.x, ed.y, ed.dx, ed.dy, ed.energy, ed.max_energy,
                 ed.metabolism, ed.size_gene, ed.diet_type, ed.habitat,
                 ed.efficiency, ed.alive,
+                w.biomass,
                 w.food_values, w.tile_types,
                 n, w.width, w.height, dt, ec.energy_from_food,
             )
@@ -42,11 +43,21 @@ class EnergySystem(System):
         cost = ed.metabolism[s] * (0.5 + raw_size) * dt
         speed = np.sqrt(ed.dx[s] ** 2 + ed.dy[s] ** 2)
         cost += speed * raw_size * 0.5 * dt
+        pred_mask = ed.diet_type[s] == 2
+        cost = np.where(pred_mask, cost * 0.5, cost)
 
         ed.energy[s] -= np.where(alive, cost, 0)
 
         ix = np.clip(ed.x[s].astype(np.int32), 0, w.width - 1)
         iy = np.clip(ed.y[s].astype(np.int32), 0, w.height - 1)
+
+        bio = w.biomass[iy, ix]
+        scav = np.where(pred_mask & alive & (bio > 2.0), np.minimum(bio * 0.05, 3.0) * dt, 0.0).astype(np.float32)
+        ed.energy[s] += scav
+        scav_pos = scav > 0
+        if np.any(scav_pos):
+            np.add.at(w.biomass, (iy[scav_pos], ix[scav_pos]), -scav[scav_pos])
+            np.clip(w.biomass, 0, None, out=w.biomass)
 
         from core.world import TileType
         is_water = w.tile_types[iy, ix] == TileType.WATER
@@ -76,7 +87,9 @@ class EnergySystem(System):
         np.add.at(w.food_values, (iy, ix), -depletion)
         np.clip(w.food_values, 0, None, out=w.food_values)
 
-        ed.energy[s] = np.minimum(ed.energy[s], ed.max_energy[s])
+        pred_mask = ed.diet_type[s] == 2
+        cap = np.where(pred_mask, ed.max_energy[s] * 1.5, ed.max_energy[s])
+        ed.energy[s] = np.minimum(ed.energy[s], cap)
 
     def _update_ecs(self, world: object, dt: float) -> None:
         w: World = world
@@ -106,9 +119,21 @@ class EnergySystem(System):
                 speed = math.sqrt(vel.dx ** 2 + vel.dy ** 2)
                 base_cost += speed * size * 0.5 * dt
 
+            diet = self.em.get_component(eid, Diet)
+            if diet is not None and diet.diet_type == DietType.PREDATOR:
+                base_cost *= 0.5
+
             energy.current -= base_cost
 
-            diet = self.em.get_component(eid, Diet)
+            if diet is not None and diet.diet_type == DietType.PREDATOR:
+                ix = max(0, min(int(pos.x), w.width - 1))
+                iy = max(0, min(int(pos.y), w.height - 1))
+                bio_val = w.biomass[iy, ix]
+                if bio_val > 2.0:
+                    scav = min(bio_val * 0.05, 3.0) * dt
+                    energy.current += scav
+                    w.biomass[iy, ix] -= scav
+
             if diet is None or diet.diet_type != DietType.PREDATOR:
                 ix, iy = int(pos.x), int(pos.y)
                 fv = w.get_food(ix, iy)
@@ -117,4 +142,5 @@ class EnergySystem(System):
                     energy.current += eat_amount * diet.efficiency if diet else eat_amount
                     w.food_values[iy, ix] -= eat_amount
 
-            energy.current = min(energy.current, energy.max_value)
+            cap = energy.max_value * 1.5 if diet and diet.diet_type == DietType.PREDATOR else energy.max_value
+            energy.current = min(energy.current, cap)
