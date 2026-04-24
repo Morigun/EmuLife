@@ -1,0 +1,25 @@
+{
+  "tick": 11900,
+  "all_time": {
+    "abiogenesis": 1054,
+    "births_asexual": 3759,
+    "births_sexual": 1322,
+    "deaths": 5953,
+    "total_spawned": 6135
+  },
+  "per_tick_avg": {
+    "abiogenesis": 0.089,
+    "births_asexual": 0.316,
+    "births_sexual": 0.111,
+    "deaths": 0.5
+  },
+  "alive_now": {
+    "total": 382,
+    "asexual_repro": 259,
+    "sexual_repro": 0,
+    "hermaphrodite_repro": 123,
+    "origin_abio": 24,
+    "origin_born_asex": 220,
+    "origin_born_sex": 138
+  }
+}

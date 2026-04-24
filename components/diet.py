@@ -7,6 +7,7 @@ class DietType(Enum):
     HERBIVORE = "herbivore"
     OMNIVORE = "omnivore"
     PREDATOR = "predator"
+    CARNIVOROUS_PLANT = "carnivorous_plant"
 
 
 @dataclass

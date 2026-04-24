@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import numpy as np
 import pygame
 
@@ -151,6 +152,14 @@ class Renderer:
                     (int(sx + r), int(sy + r)),
                 ]
                 pygame.draw.polygon(self.screen, color, points)
+            elif app.shape == "pentagon":
+                r = radius
+                pts = []
+                for a in range(5):
+                    angle = a * 2 * math.pi / 5 - math.pi / 2
+                    pts.append((int(sx + r * math.cos(angle)),
+                                int(sy + r * math.sin(angle))))
+                pygame.draw.polygon(self.screen, color, pts)
             elif app.shape == "diamond":
                 r = radius
                 points = [
@@ -160,6 +169,14 @@ class Renderer:
                     (int(sx - r), int(sy)),
                 ]
                 pygame.draw.polygon(self.screen, color, points)
+            elif app.shape == "hexagon":
+                r = radius
+                pts = []
+                for a in range(6):
+                    angle = a * math.pi / 3
+                    pts.append((int(sx + r * math.cos(angle)),
+                                int(sy + r * math.sin(angle))))
+                pygame.draw.polygon(self.screen, color, pts)
             elif app.shape == "square":
                 r = radius
                 rect = pygame.Rect(int(sx - r), int(sy - r), r * 2, r * 2)
@@ -196,19 +213,14 @@ class Renderer:
             repro_type_int = int(ed.repro_type[idx])
             habitat_int = int(ed.habitat[idx])
 
-            if repro_type_int == 0:
+            if diet_int == 3:
                 r = radius
-                points = [
-                    (int(screen_x), int(screen_y - r)),
-                    (int(screen_x + r), int(screen_y)),
-                    (int(screen_x), int(screen_y + r)),
-                    (int(screen_x - r), int(screen_y)),
-                ]
-                pygame.draw.polygon(self.screen, color, points)
-            elif habitat_int == 0:
-                r = radius
-                rect = pygame.Rect(int(screen_x - r), int(screen_y - r), r * 2, r * 2)
-                pygame.draw.rect(self.screen, color, rect)
+                pts = []
+                for a in range(6):
+                    angle = a * math.pi / 3
+                    pts.append((int(screen_x + r * math.cos(angle)),
+                                int(screen_y + r * math.sin(angle))))
+                pygame.draw.polygon(self.screen, color, pts)
             elif diet_int == 2:
                 r = radius
                 points = [
@@ -217,6 +229,27 @@ class Renderer:
                     (int(screen_x + r), int(screen_y + r)),
                 ]
                 pygame.draw.polygon(self.screen, color, points)
+            elif repro_type_int == 0:
+                r = radius
+                points = [
+                    (int(screen_x), int(screen_y - r)),
+                    (int(screen_x + r), int(screen_y)),
+                    (int(screen_x), int(screen_y + r)),
+                    (int(screen_x - r), int(screen_y)),
+                ]
+                pygame.draw.polygon(self.screen, color, points)
+            elif repro_type_int == 2:
+                r = radius
+                pts = []
+                for a in range(5):
+                    angle = a * 2 * math.pi / 5 - math.pi / 2
+                    pts.append((int(screen_x + r * math.cos(angle)),
+                                int(screen_y + r * math.sin(angle))))
+                pygame.draw.polygon(self.screen, color, pts)
+            elif habitat_int == 0:
+                r = radius
+                rect = pygame.Rect(int(screen_x - r), int(screen_y - r), r * 2, r * 2)
+                pygame.draw.rect(self.screen, color, rect)
             else:
                 pygame.draw.circle(self.screen, color, (int(screen_x), int(screen_y)), radius)
 
@@ -229,6 +262,15 @@ class Renderer:
             if idx is None or not entity_data.alive[idx]:
                 return
             sx, sy = camera.world_to_screen(float(entity_data.x[idx]), float(entity_data.y[idx]))
+            diet_int = int(entity_data.diet_type[idx])
+            if diet_int == 3:
+                trap_power = float(entity_data.aggression[idx])
+                trap_radius = self.config.carnivorous_plant.trap_base_radius + trap_power * (self.config.carnivorous_plant.trap_max_radius - self.config.carnivorous_plant.trap_base_radius)
+                screen_radius = int(trap_radius * camera.zoom)
+                if screen_radius > 0:
+                    trap_surf = pygame.Surface((screen_radius * 2, screen_radius * 2), pygame.SRCALPHA)
+                    pygame.draw.circle(trap_surf, (255, 100, 100, 40), (screen_radius, screen_radius), screen_radius)
+                    self.screen.blit(trap_surf, (int(sx) - screen_radius, int(sy) - screen_radius))
         else:
             pos = entity_manager.get_component(selected_id, Position)
             if pos is None:
@@ -237,3 +279,17 @@ class Renderer:
 
         radius = 15
         pygame.draw.circle(self.screen, (255, 255, 0), (int(sx), int(sy)), radius, 2)
+
+    def render_night_overlay(self, world: World) -> None:
+        p = world.day_progress
+        if p < 0.55:
+            return
+        if p < 0.70:
+            darkness = int((p - 0.55) / 0.15 * 80)
+        else:
+            darkness = 80
+        if darkness <= 0:
+            return
+        overlay = pygame.Surface(self.screen.get_size(), pygame.SRCALPHA)
+        overlay.fill((10, 10, 40, min(darkness, 80)))
+        self.screen.blit(overlay, (0, 0))

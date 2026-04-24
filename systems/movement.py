@@ -30,7 +30,7 @@ class MovementSystem(System):
 
         if HAS_NUMBA:
             moved, old_x, old_y = movement_update_kernel(
-                ed.x, ed.y, ed.dx, ed.dy, ed.habitat, ed.alive,
+                ed.x, ed.y, ed.dx, ed.dy, ed.habitat, ed.alive, ed.diet_type,
                 w.tile_types, n, w.width, w.height, dt,
             )
             self.moved_mask = moved
@@ -39,6 +39,10 @@ class MovementSystem(System):
             return
 
         s = slice(0, n)
+
+        plant_mask = ed.diet_type[s] == 3
+        ed.dx[s] = np.where(plant_mask & ed.alive[s], 0.0, ed.dx[s])
+        ed.dy[s] = np.where(plant_mask & ed.alive[s], 0.0, ed.dy[s])
 
         old_x = ed.x[s].copy()
         old_y = ed.y[s].copy()
@@ -58,8 +62,14 @@ class MovementSystem(System):
         aquatic = habitat == 0
         amphibious = habitat == 2
 
+        cur_ix = np.clip(ed.x[s].astype(np.int32), 0, w.width - 1)
+        cur_iy = np.clip(ed.y[s].astype(np.int32), 0, w.height - 1)
+        cur_is_water = w.tile_types[cur_iy, cur_ix] == TileType.WATER
+        on_wrong_tile = (terrestrial & cur_is_water) | (aquatic & ~cur_is_water)
+
         walkable = (
-            (terrestrial & ~is_water)
+            on_wrong_tile
+            | (terrestrial & ~is_water)
             | (aquatic & is_water)
             | amphibious
         ) & ed.alive[s]
@@ -80,10 +90,18 @@ class MovementSystem(System):
         self.moved_entities.clear()
         from components.position import Position
         from components.velocity import Velocity
+        from components.habitat import Habitat
+        from components.diet import Diet, DietType
         for eid in self.em.get_entities_with(Position, Velocity):
             pos = self.em.get_component(eid, Position)
             vel = self.em.get_component(eid, Velocity)
             if pos is None or vel is None:
+                continue
+
+            diet_comp = self.em.get_component(eid, Diet)
+            if diet_comp is not None and diet_comp.diet_type == DietType.CARNIVOROUS_PLANT:
+                vel.dx = 0.0
+                vel.dy = 0.0
                 continue
 
             old_x, old_y = pos.x, pos.y
@@ -93,7 +111,16 @@ class MovementSystem(System):
             new_x = max(0.0, min(float(w.width - 1), new_x))
             new_y = max(0.0, min(float(w.height - 1), new_y))
 
-            if w.is_walkable(new_x, new_y):
+            hab = self.em.get_component(eid, Habitat)
+            on_wrong_tile = False
+            if hab is not None:
+                cur_is_water = not w.is_walkable(pos.x, pos.y)
+                if hab.habitat_type == "terrestrial" and cur_is_water:
+                    on_wrong_tile = True
+                elif hab.habitat_type == "aquatic" and not cur_is_water:
+                    on_wrong_tile = True
+
+            if on_wrong_tile or w.is_walkable(new_x, new_y):
                 pos.x = new_x
                 pos.y = new_y
                 self.moved_entities.append((eid, old_x, old_y))

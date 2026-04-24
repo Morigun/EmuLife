@@ -10,3 +10,4 @@ from components.metabolism import Metabolism
 from components.diet import Diet, DietType
 from components.reproduction import Reproduction
 from components.habitat import Habitat
+from components.conditions import Conditions

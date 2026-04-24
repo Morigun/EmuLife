@@ -53,7 +53,7 @@ class SensorSystem(System):
                 continue
 
             px, py = ed.x[idx], ed.y[idx]
-            radius = ed.vision[idx]
+            radius = ed.vision[idx] * w.vision_mult
             radius_sq = radius * radius
 
             self.spatial_hash.query_nearby_excluding_into(px, py, radius, eid, _nearby)
@@ -93,7 +93,7 @@ class SensorSystem(System):
             if pos is None or sensor_comp is None:
                 continue
 
-            radius = sensor_comp.radius
+            radius = sensor_comp.radius * w.vision_mult
             self.spatial_hash.query_nearby_excluding_into(pos.x, pos.y, radius, eid, _nearby)
 
             filtered = []

@@ -9,6 +9,7 @@ _DIET_TYPE_TO_INT = {
     DietType.HERBIVORE: 0,
     DietType.OMNIVORE: 1,
     DietType.PREDATOR: 2,
+    DietType.CARNIVOROUS_PLANT: 3,
 }
 
 INT_TO_DIET_TYPE = {v: k for k, v in _DIET_TYPE_TO_INT.items()}
@@ -44,14 +45,20 @@ class EntityData:
         self.b = np.zeros(self.MAX_ENTITIES, dtype=np.uint8)
         self.repro_type = np.zeros(self.MAX_ENTITIES, dtype=np.int8)
         self.habitat = np.zeros(self.MAX_ENTITIES, dtype=np.int8)
+        self.speed_mod = np.ones(self.MAX_ENTITIES, dtype=np.float32)
+        self.metabolism_mod = np.ones(self.MAX_ENTITIES, dtype=np.float32)
+        self.efficiency_mod = np.ones(self.MAX_ENTITIES, dtype=np.float32)
+        self.origin = np.zeros(self.MAX_ENTITIES, dtype=np.int8)
+        self.parent_eid = np.full(self.MAX_ENTITIES, -1, dtype=np.int32)
         self.eids = np.full(self.MAX_ENTITIES, -1, dtype=np.int32)
+        self.photosynth = np.zeros(self.MAX_ENTITIES, dtype=np.float32)
 
         self.count: int = 0
         self.eid_to_idx: dict[int, int] = {}
         self.idx_to_eid: dict[int, int] = {}
         self._free: list[int] = []
 
-    def add(self, eid: int, genome, x: float, y: float, config, energy_fraction: float = 0.2, parent_energy_sum: float = 200.0) -> int:
+    def add(self, eid: int, genome, x: float, y: float, config, energy_fraction: float = 0.2, parent_energy_sum: float = 200.0, origin: int = 0, parent_eid: int = -1) -> int:
         if self._free:
             idx = self._free.pop()
         else:
@@ -65,7 +72,22 @@ class EntityData:
         diet = _diet_type_to_int(genome.diet_type_value)
         repro_thresh = 0.5 + genome.repro_threshold_gene * 0.4
         aggression = genome.aggression
-        repro_type_val = 0 if genome.reproduction_type < 0.4 else 1
+        if diet == 3:
+            repro_type_val = 0
+        elif diet == 2:
+            if genome.reproduction_type < 0.50:
+                repro_type_val = 0
+            elif genome.reproduction_type < 0.90:
+                repro_type_val = 2
+            else:
+                repro_type_val = 1
+        else:
+            if genome.reproduction_type < 0.30:
+                repro_type_val = 0
+            elif genome.reproduction_type < 0.70:
+                repro_type_val = 2
+            else:
+                repro_type_val = 1
         habitat_val = _habitat_gene_to_int(genome.habitat)
 
         max_energy = 50.0 + size_val * 10.0
@@ -73,6 +95,8 @@ class EntityData:
         max_age_val = int(800 + size_val * 200)
         if diet == 2:
             child_energy = max_energy * config.energy.predator_child_energy_fraction
+        elif diet == 3:
+            child_energy = max_energy * 0.5
         else:
             child_energy = max_energy * energy_fraction
 
@@ -93,13 +117,12 @@ class EntityData:
         self.diet_type[idx] = diet
         self.efficiency[idx] = 0.8 + aggression * 0.2
         self.repro_threshold[idx] = repro_thresh
-        if repro_type_val == 0:
-            if diet == 2:
-                cd = 120
-            else:
-                cd = config.reproduction.asexual_cooldown
-        else:
+        if repro_type_val in (1, 2):
             cd = config.reproduction.sexual_cooldown
+        elif diet == 2:
+            cd = 120
+        else:
+            cd = config.reproduction.asexual_cooldown
         self.repro_cooldown[idx] = cd
         self.repro_max_cooldown[idx] = cd
         self.aggression[idx] = aggression
@@ -109,7 +132,13 @@ class EntityData:
         self.b[idx] = int(genome.b_color * 255)
         self.repro_type[idx] = repro_type_val
         self.habitat[idx] = habitat_val
+        self.speed_mod[idx] = 1.0
+        self.metabolism_mod[idx] = 1.0
+        self.efficiency_mod[idx] = 1.0
+        self.origin[idx] = origin
+        self.parent_eid[idx] = parent_eid
         self.eids[idx] = eid
+        self.photosynth[idx] = genome.photosynth if diet == 3 else 0.0
 
         self.eid_to_idx[eid] = idx
         self.idx_to_eid[idx] = eid
@@ -120,6 +149,11 @@ class EntityData:
         if idx is not None:
             self.alive[idx] = False
             self.eids[idx] = -1
+            self.speed_mod[idx] = 1.0
+            self.metabolism_mod[idx] = 1.0
+            self.efficiency_mod[idx] = 1.0
+            self.origin[idx] = 0
+            self.parent_eid[idx] = -1
             self._free.append(idx)
             del self.idx_to_eid[idx]
 
@@ -177,12 +211,14 @@ class EntityData:
                 self.g[idx] = int(g.g_color * 255)
                 self.b[idx] = int(g.b_color * 255)
                 self.aggression[idx] = g.aggression
+                self.photosynth[idx] = g.photosynth
             else:
                 self.metabolism[idx] = 1.0
                 self.size_gene[idx] = 5.0
                 self.speed_gene[idx] = 3.0
                 self.vision[idx] = 50.0
                 self.aggression[idx] = 0.5
+                self.photosynth[idx] = 0.0
 
             if diet:
                 self.diet_type[idx] = _DIET_TYPE_TO_INT[diet.diet_type]
@@ -195,7 +231,7 @@ class EntityData:
                 self.repro_threshold[idx] = repro.threshold
                 self.repro_cooldown[idx] = repro.cooldown
                 self.repro_max_cooldown[idx] = repro.max_cooldown
-                self.repro_type[idx] = 0 if repro.repro_type == "asexual" else 1
+                self.repro_type[idx] = {"asexual": 0, "sexual": 1, "hermaphrodite": 2}.get(repro.repro_type, 0)
             else:
                 self.repro_threshold[idx] = 0.7
                 self.repro_cooldown[idx] = 0
@@ -215,8 +251,10 @@ def _diet_type_to_int(value: float) -> int:
         return 0
     elif value < 0.66:
         return 1
-    else:
+    elif value < 0.95:
         return 2
+    else:
+        return 3
 
 
 def _habitat_gene_to_int(value: float) -> int:

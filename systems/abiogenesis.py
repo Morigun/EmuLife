@@ -26,11 +26,13 @@ class AbiogenesisSystem(System):
         self.config = config
         self.entity_data = entity_data
         self.lightning_events: list[tuple[int, int]] = []
+        self.spawns_tick: int = 0
 
     def update(self, world: object, dt: float) -> None:
         w: World = world
         ac = self.config.abiogenesis
         self.lightning_events.clear()
+        self.spawns_tick = 0
 
         if self.em.entity_count >= self.config.simulation.max_population:
             return
@@ -40,7 +42,7 @@ class AbiogenesisSystem(System):
         if ed is not None:
             n = ed.count
             if HAS_NUMBA:
-                _, _, pred_count = compute_stats_kernel(ed.diet_type, ed.alive, n)
+                _, _, pred_count, _ = compute_stats_kernel(ed.diet_type, ed.alive, n)
             else:
                 pred_count = int(np.sum(ed.alive[:n] & (ed.diet_type[:n] == 2)))
 
@@ -93,9 +95,12 @@ class AbiogenesisSystem(System):
         genome = Genome.random_instance(self.config)
         if not walkable:
             genome.genes[11] = random.random() * 0.33
+        else:
+            genome.genes[11] = 0.33 + random.random() * 0.34
         if force_predator:
             genome.genes[4] = 0.66 + random.random() * 0.34
             genome.genes[6] = max(0.4, genome.aggression)
+        genome.genes[10] = 0.25
 
         energy_fraction = 0.6 if force_predator else 0.3
 
@@ -104,5 +109,7 @@ class AbiogenesisSystem(System):
             energy_fraction=energy_fraction,
             parent_energy_sum=100.0,
             entity_data=self.entity_data,
+            origin=0,
         )
         self.spatial_hash.insert(eid, x, y)
+        self.spawns_tick += 1

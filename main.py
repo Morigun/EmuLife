@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import random
 import multiprocessing
@@ -23,6 +24,7 @@ from utils.spatial_hash import SpatialHash
 from utils.logger import get_logger
 
 from systems.sensor_system import SensorSystem
+from systems.condition_system import ConditionSystem
 from systems.behavior import BehaviorSystem
 from systems.movement import MovementSystem
 from systems.interaction import InteractionSystem
@@ -32,6 +34,7 @@ from systems.reproduction import ReproductionSystem, create_organism
 from systems.death import DeathSystem
 from systems.world_update import WorldUpdateSystem
 from systems.abiogenesis import AbiogenesisSystem
+from systems.day_night_system import DayNightSystem
 
 from rendering.renderer import Renderer
 from rendering.ui import UI
@@ -79,28 +82,40 @@ class Simulation:
         self.movement_system = MovementSystem(self.em, self.config, self.entity_data)
         self.reproduction_system = ReproductionSystem(self.em, self.spatial_hash, self.config, self.entity_data)
         self.abiogenesis_system = AbiogenesisSystem(self.em, self.spatial_hash, self.config, self.entity_data)
+        self.death_system = DeathSystem(self.em, self.config, self.spatial_hash, self.entity_data)
 
         self.systems = [
+            DayNightSystem(self.config),
             SensorSystem(self.em, self.spatial_hash, self.config, self.entity_data),
+            ConditionSystem(self.em, self.config, self.entity_data),
             BehaviorSystem(self.em, self.config, self.entity_data, self.spatial_hash),
             self.movement_system,
             InteractionSystem(self.em, self.config, self.spatial_hash, self.entity_data),
             EnergySystem(self.em, self.config, self.entity_data),
             AgingSystem(self.em, self.config, self.entity_data),
             self.reproduction_system,
-            DeathSystem(self.em, self.config, self.spatial_hash, self.entity_data),
+            self.death_system,
             self.abiogenesis_system,
             WorldUpdateSystem(self.config),
         ]
-
-        self.renderer = Renderer(self.screen, self.config)
-        self.ui = UI(self.screen, self.config)
-        self.minimap = Minimap(self.screen, self.config)
 
         self.tick = 0
         self.running = True
         self.paused = False
         self.sim_speed = self.config.simulation.simulation_speed
+        self._cumulative = {
+            "abiogenesis": 0,
+            "births_asexual": 0,
+            "births_sexual": 0,
+            "deaths": 0,
+        }
+
+        self.renderer = Renderer(self.screen, self.config)
+        self.ui = UI(self.screen, self.config)
+        self.ui.em = self.em
+        self.ui.entity_data = self.entity_data
+        self.ui.cumulative = self._cumulative
+        self.minimap = Minimap(self.screen, self.config)
 
         self._spawn_initial_population()
 
@@ -137,6 +152,7 @@ class Simulation:
             eid = create_organism(
                 self.em, genome, x, y, self.config,
                 energy_fraction=0.7, parent_energy_sum=200.0,
+                origin=0,
             )
             pos = self.em.get_component(eid, Position)
             if pos:
@@ -253,6 +269,41 @@ class Simulation:
             self.camera.follow_entity = None
             self.camera.pan(dx, dy, dt)
 
+    def _save_lifetime_stats(self) -> None:
+        c = self._cumulative
+        tick = max(self.tick, 1)
+        ed = self.entity_data
+        n = ed.count
+        alive = ed.alive[:n]
+
+        data = {
+            "tick": tick,
+            "all_time": {
+                "abiogenesis": c["abiogenesis"],
+                "births_asexual": c["births_asexual"],
+                "births_sexual": c["births_sexual"],
+                "deaths": c["deaths"],
+                "total_spawned": c["abiogenesis"] + c["births_asexual"] + c["births_sexual"],
+            },
+            "per_tick_avg": {
+                "abiogenesis": round(c["abiogenesis"] / tick, 3),
+                "births_asexual": round(c["births_asexual"] / tick, 3),
+                "births_sexual": round(c["births_sexual"] / tick, 3),
+                "deaths": round(c["deaths"] / tick, 3),
+            },
+            "alive_now": {
+                "total": int(np.sum(alive)),
+                "asexual_repro": int(np.sum(alive & (ed.repro_type[:n] == 0))),
+                "sexual_repro": int(np.sum(alive & (ed.repro_type[:n] == 1))),
+                "hermaphrodite_repro": int(np.sum(alive & (ed.repro_type[:n] == 2))),
+                "origin_abio": int(np.sum(alive & (ed.origin[:n] == 0))),
+                "origin_born_asex": int(np.sum(alive & (ed.origin[:n] == 1))),
+                "origin_born_sex": int(np.sum(alive & (ed.origin[:n] == 2))),
+            },
+        }
+        with open("stats.json", "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+
     def run(self) -> None:
         while self.running:
             real_dt = self.clock.tick(self.config.screen.fps_cap) / 1000.0
@@ -272,8 +323,17 @@ class Simulation:
 
                 self.tick += 1
 
+                self._cumulative["abiogenesis"] += self.abiogenesis_system.spawns_tick
+                self._cumulative["births_asexual"] += self.reproduction_system.births_asexual_tick
+                self._cumulative["births_sexual"] += self.reproduction_system.births_sexual_tick
+                self._cumulative["deaths"] += self.death_system.deaths_tick
+
+                if self.tick % 100 == 0:
+                    self._save_lifetime_stats()
+
             self.screen.fill((20, 20, 30))
             self.renderer.render_world(self.world, self.camera)
+            self.renderer.render_night_overlay(self.world)
 
             for lx, ly in self.abiogenesis_system.lightning_events:
                 sx, sy = self.camera.world_to_screen(float(lx), float(ly))
@@ -286,8 +346,8 @@ class Simulation:
             self.renderer.render_entities_from_soa(self.entity_data, self.camera)
             self.renderer.render_selected(self.em, self.camera, self.ui.selected_entity, self.entity_data)
 
-            self.ui.render_stats(self.em, fps, self.tick, self.sim_speed)
-            self.ui.render_selected_info_soa(self.entity_data, self.ui.selected_entity)
+            self.ui.render_stats(self.em, fps, self.tick, self.sim_speed, self.world)
+            self.ui.render_selected_info_soa(self.entity_data, self.ui.selected_entity, self.em)
             self.ui.render_help()
             self.minimap.render(self.world, self.camera, self.em, self.tick, self.entity_data)
 
@@ -471,17 +531,28 @@ class SimulationMP:
 
         n = proxy.count
         if HAS_NUMBA:
-            herb, omni, pred = compute_stats_kernel(proxy.diet_type, proxy.alive, n)
+            herb, omni, pred, plant = compute_stats_kernel(proxy.diet_type, proxy.alive, n)
         else:
             alive = proxy.alive
             herb = int(np.sum(alive & (proxy.diet_type == 0)))
             omni = int(np.sum(alive & (proxy.diet_type == 1)))
             pred = int(np.sum(alive & (proxy.diet_type == 2)))
-        total = herb + omni + pred
+            plant = int(np.sum(alive & (proxy.diet_type == 3)))
+        total = herb + omni + pred + plant
+
+        alive = proxy.alive
+        asex = int(np.sum(alive & (proxy.repro_type == 0)))
+        sex = int(np.sum(alive & (proxy.repro_type == 1)))
+        herma = int(np.sum(alive & (proxy.repro_type == 2)))
+        abio = int(np.sum(alive & (proxy.origin == 0)))
+        birth_asex = int(np.sum(alive & (proxy.origin == 1)))
+        birth_sex = int(np.sum(alive & (proxy.origin == 2)))
 
         lines = [
             f"FPS: {fps:.0f}  Tick: {tick}  Speed: {self.sim_speed:.1f}x [MP]",
-            f"Total: {total}  Herb: {herb}  Omni: {omni}  Pred: {pred}",
+            f"Total: {total}  Herb: {herb}  Omni: {omni}  Pred: {pred}  Plant: {plant}",
+            f"Asex: {asex}  Sex: {sex}  Herm: {herma} [MP]",
+            f"Abio: {abio}  Born(a): {birth_asex}  Born(s): {birth_sex}",
             f"Max pop: {self.config.simulation.max_population}",
         ]
 
@@ -508,7 +579,7 @@ class SimulationMP:
             self.selected_entity = None
             return
 
-        from utils.species_namer import get_species_name_from_soa_data, get_diet_name, get_repro_name, get_habitat_name
+        from utils.species_namer import get_species_name_from_soa_data, get_diet_name, get_repro_name, get_habitat_name, get_origin_name
 
         species = get_species_name_from_soa_data(
             diet_type=int(proxy.diet_type[idx]),
@@ -528,6 +599,7 @@ class SimulationMP:
             f"Energy: {proxy.energy[idx]:.1f}/{proxy.max_energy[idx]:.1f}",
             f"Health: {proxy.health[idx]:.1f}/{proxy.max_health[idx]:.1f}",
             f"Age: {proxy.age[idx]}/{proxy.max_age[idx]}",
+            f"Origin: {get_origin_name(int(proxy.origin[idx]))}",
             f"Diet: {diet_name}",
             f"Repro: {repro_name}",
             f"Habitat: {habitat_name}",
@@ -537,7 +609,15 @@ class SimulationMP:
             f"Pos: ({proxy.x[idx]:.0f}, {proxy.y[idx]:.0f})",
         ]
 
-        panel_w = 250
+        if int(proxy.diet_type[idx]) == 3:
+            lines.append(f"Photosynth: {proxy.photosynth[idx]:.2f}")
+            lines.append(f"Trap power: {proxy.aggression[idx]:.2f}")
+
+        lines.append(
+            f"Parent: #{int(proxy.parent_eid[idx])}" if proxy.parent_eid[idx] >= 0 else "Parent: none"
+        )
+
+        panel_w = 300
         panel_h = len(lines) * 18 + 10
         panel_x = self.screen.get_width() - panel_w - 10
         panel_y = 5

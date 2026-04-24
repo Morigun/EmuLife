@@ -20,6 +20,15 @@ _GENUS_TABLE = {
     (2, 1, 0): "Piscamator",
     (2, 1, 1): "Praedator",
     (2, 1, 2): "Dominatus",
+    (0, 2, 0): "Ambiflora",
+    (0, 2, 1): "Dualclonus",
+    (0, 2, 2): "Panciparex",
+    (1, 2, 0): "Bivalis",
+    (1, 2, 1): "Diplophagus",
+    (1, 2, 2): "Amphimixus",
+    (2, 2, 0): "Dualcarnis",
+    (2, 2, 1): "Bivorax",
+    (2, 2, 2): "Dimorphus",
 }
 
 _SPECIES_TABLE = {
@@ -52,9 +61,10 @@ _SPECIES_TABLE = {
     (2, 2, 2): "titanius",
 }
 
-_DIET_NAMES = {0: "Herbivore", 1: "Omnivore", 2: "Predator"}
-_REPRO_NAMES = {0: "Asexual", 1: "Sexual"}
+_DIET_NAMES = {0: "Herbivore", 1: "Omnivore", 2: "Predator", 3: "Carn.Plant"}
+_REPRO_NAMES = {0: "Asexual", 1: "Sexual", 2: "Hermaphro"}
 _HABITAT_NAMES = {0: "Aquatic", 1: "Terrestrial", 2: "Amphibious"}
+_ORIGIN_NAMES = {0: "Abiogenesis", 1: "Birth (asexual)", 2: "Birth (sexual)"}
 
 
 def _quantize(value: float, low: float = 0.33, high: float = 0.66) -> int:
@@ -72,7 +82,7 @@ def get_species_name(genes) -> str:
         g = list(genes)
 
     diet = _quantize(g[4])
-    repro = 0 if g[10] < 0.4 else 1
+    repro = 0 if g[10] < 0.3 else (2 if g[10] < 0.7 else 1)
     habitat = _quantize(g[11])
 
     genus = _GENUS_TABLE.get((diet, repro, habitat), "Incertae")
@@ -115,3 +125,7 @@ def get_repro_name(repro_type: int) -> str:
 
 def get_habitat_name(habitat: int) -> str:
     return _HABITAT_NAMES.get(int(habitat), "Unknown")
+
+
+def get_origin_name(origin: int) -> str:
+    return _ORIGIN_NAMES.get(int(origin), "Unknown")

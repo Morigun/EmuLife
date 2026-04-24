@@ -86,3 +86,7 @@ class Genome:
     @property
     def habitat(self) -> float:
         return self.get_gene(11)
+
+    @property
+    def photosynth(self) -> float:
+        return self.get_gene(13)

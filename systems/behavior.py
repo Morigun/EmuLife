@@ -44,6 +44,18 @@ class BehaviorSystem(System):
             if idx % STAGGER_BATCHES != current_batch:
                 continue
 
+            diet_int = int(ed.diet_type[idx])
+            if diet_int == 3:
+                ed.dx[idx] = 0.0
+                ed.dy[idx] = 0.0
+                eid = ed.idx_to_eid.get(idx)
+                if eid is not None:
+                    vel = self.em.get_component(eid, Velocity)
+                    if vel:
+                        vel.dx = 0.0
+                        vel.dy = 0.0
+                continue
+
             eid = ed.idx_to_eid.get(idx)
             if eid is None:
                 continue
@@ -53,7 +65,7 @@ class BehaviorSystem(System):
                 continue
 
             px, py = ed.x[idx], ed.y[idx]
-            max_speed = float(ed.speed_gene[idx])
+            max_speed = float(ed.speed_gene[idx]) * float(ed.speed_mod[idx])
 
             target_dx, target_dy = 0.0, 0.0
             action = self._decide_soa(idx, eid, ed, sensor)
@@ -92,7 +104,7 @@ class BehaviorSystem(System):
                     target_dy = random.uniform(-1, 1)
 
             if action == "hunt":
-                max_speed *= 2.0
+                max_speed *= 2.5
 
             if target_dx != 0 or target_dy != 0:
                 mag = math.sqrt(target_dx ** 2 + target_dy ** 2)
@@ -127,7 +139,7 @@ class BehaviorSystem(System):
                 return "eat"
 
         repro_type_int = int(ed.repro_type[idx])
-        if repro_type_int == 1:
+        if repro_type_int in (1, 2):
             repro_cooldown = ed.repro_cooldown[idx]
             if repro_cooldown <= 0:
                 repro_threshold = float(ed.repro_threshold[idx]) * ed.max_energy[idx]
@@ -174,11 +186,9 @@ class BehaviorSystem(System):
         my_diet = {0: DietType.HERBIVORE, 1: DietType.OMNIVORE, 2: DietType.PREDATOR}.get(diet_int, DietType.HERBIVORE)
         for nb in sensor.nearby_entities:
             if nb.diet_type == my_diet:
-                n_repro = self.em.get_component(nb.eid, Reproduction)
-                if n_repro is None or n_repro.cooldown <= 0:
-                    n_idx = ed.eid_to_idx.get(nb.eid)
-                    if n_idx is not None:
-                        return ed.x[n_idx] - ed.x[idx], ed.y[n_idx] - ed.y[idx]
+                n_idx = ed.eid_to_idx.get(nb.eid)
+                if n_idx is not None and ed.repro_cooldown[n_idx] <= 0:
+                    return ed.x[n_idx] - ed.x[idx], ed.y[n_idx] - ed.y[idx]
         return 0.0, 0.0
 
     def _scent_hunt(self, idx, eid, ed, px, py):
@@ -211,6 +221,12 @@ class BehaviorSystem(System):
             if pos is None or vel is None or energy is None or sensor is None:
                 continue
 
+            diet = self.em.get_component(eid, Diet)
+            if diet and diet.diet_type == DietType.CARNIVOROUS_PLANT:
+                vel.dx = 0.0
+                vel.dy = 0.0
+                continue
+
             genome_comp = self.em.get_component(eid, GenomeComp)
             diet = self.em.get_component(eid, Diet)
             repro = self.em.get_component(eid, Reproduction)
@@ -220,7 +236,7 @@ class BehaviorSystem(System):
             target_dx, target_dy = 0.0, 0.0
             action = self._decide(eid, energy, sensor, diet, repro, genome_comp)
 
-            speed_mult = 2.0 if action == "hunt" else 1.0
+            speed_mult = 2.5 if action == "hunt" else 1.0
 
             if action == "flee":
                 target_dx, target_dy = self._flee(pos, sensor)
@@ -303,7 +319,7 @@ class BehaviorSystem(System):
             if diet and diet.diet_type != DietType.PREDATOR:
                 return "eat"
 
-        if repro and repro.repro_type != "asexual" and repro.cooldown <= 0:
+        if repro and repro.repro_type in ("sexual", "hermaphrodite") and repro.cooldown <= 0:
             repro_threshold = repro.threshold * energy.max_value
             if energy.current > repro_threshold:
                 return "reproduce"

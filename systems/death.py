@@ -13,8 +13,10 @@ class DeathSystem(System):
         self.config = config
         self.spatial_hash = spatial_hash
         self.entity_data = entity_data
+        self.deaths_tick: int = 0
 
     def update(self, world: object, dt: float) -> None:
+        self.deaths_tick = 0
         if self.entity_data is None:
             self._update_ecs()
             return
@@ -44,6 +46,7 @@ class DeathSystem(System):
                 self.spatial_hash.remove(eid)
             ed.remove(eid)
             self.em.remove_entity(eid)
+            self.deaths_tick += 1
 
     def _update_ecs(self) -> None:
         from components.health import Health
@@ -63,3 +66,4 @@ class DeathSystem(System):
             if self.spatial_hash:
                 self.spatial_hash.remove(eid)
             self.em.remove_entity(eid)
+            self.deaths_tick += 1

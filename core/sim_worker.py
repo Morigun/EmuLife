@@ -14,6 +14,7 @@ from utils.spatial_hash import SpatialHash
 from utils.logger import get_logger
 
 from systems.sensor_system import SensorSystem
+from systems.condition_system import ConditionSystem
 from systems.behavior import BehaviorSystem
 from systems.movement import MovementSystem
 from systems.interaction import InteractionSystem
@@ -23,6 +24,7 @@ from systems.reproduction import ReproductionSystem, create_organism
 from systems.death import DeathSystem
 from systems.world_update import WorldUpdateSystem
 from systems.abiogenesis import AbiogenesisSystem
+from systems.day_night_system import DayNightSystem
 
 from components.position import Position
 
@@ -50,7 +52,9 @@ class SimWorker:
         self.abiogenesis_system = AbiogenesisSystem(self.em, self.spatial_hash, self.config, self.entity_data)
 
         self.systems = [
+            DayNightSystem(self.config),
             SensorSystem(self.em, self.spatial_hash, self.config, self.entity_data),
+            ConditionSystem(self.em, self.config, self.entity_data),
             BehaviorSystem(self.em, self.config, self.entity_data, self.spatial_hash),
             self.movement_system,
             InteractionSystem(self.em, self.config, self.spatial_hash, self.entity_data),

@@ -35,7 +35,13 @@ class SharedEntityBuffer:
         ("b", np.uint8),
         ("repro_type", np.int8),
         ("habitat", np.int8),
+        ("speed_mod", np.float32),
+        ("metabolism_mod", np.float32),
+        ("efficiency_mod", np.float32),
+        ("origin", np.int8),
+        ("parent_eid", np.int32),
         ("eid", np.int32),
+        ("photosynth", np.float32),
     ]
 
     def __init__(self, name: str | None = None, create: bool = True) -> None:

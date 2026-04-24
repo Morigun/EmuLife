@@ -42,6 +42,12 @@ class World:
         self.regen_rates: np.ndarray = np.zeros((self.height, self.width), dtype=np.float32)
         self.walkable_mask: np.ndarray = np.zeros((self.height, self.width), dtype=np.bool_)
         self.biomass: np.ndarray = np.zeros((self.height, self.width), dtype=np.float32)
+        self.day_tick: int = 0
+        self.day_progress: float = 0.0
+        self.is_night: bool = False
+        self.food_regen_mult: float = 1.0
+        self.vision_mult: float = 1.0
+        self.metabolism_mult: float = 1.0
         self._generate()
 
     def _generate(self) -> None:
@@ -135,9 +141,9 @@ class World:
             return bool(self.walkable_mask[iy, ix])
         return False
 
-    def regenerate_all(self) -> None:
+    def regenerate_all(self, mult: float = 1.0) -> None:
         active = self.regen_rates > 0
         self.food_values[active] = np.minimum(
-            self.food_values[active] + self.regen_rates[active],
+            self.food_values[active] + self.regen_rates[active] * mult,
             self.max_foods[active],
         )

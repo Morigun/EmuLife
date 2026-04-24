@@ -9,7 +9,7 @@
 - Проект использует ECS (Entity-Component-System) архитектуру с гибридным SoA (Structure of Arrays) слоем для горячих данных
 - Все системы имеют dual-path: `_update_soa()` (numpy/numba batch) и `_update_ecs()` (Python loop) — SoA-путь используется когда `entity_data is not None`
 - При правках нужно учитывать оба пути (SoA и ECS) в каждой системе, а также numba-кернелы в `utils/numba_kernels.py`
-- 12 ECS-компонентов, 10 систем, 16-генный геном (используются гены 0–11)
+- 12 ECS-компонентов (включая Conditions), 11 систем (включая ConditionSystem), 16-генный геном (используются гены 0–11)
 - Два режима запуска: обычный (`python main.py`) и multiprocessing (`python main.py --mp`)
 - Git-репозиторий, текущий коммит `1c7d8b2` на ветке `master`
 
@@ -79,6 +79,18 @@
 
 **Абиогенез**: Biomass-массив накапливается при смертях. Молнии (редкие) + biomass spawning создают новых организмов. Emergency spawn убран полностью.
 
+**Система состояний (Status Effects)**: Именованные временные эффекты (раны, истощение), влияющие на характеристики через мультипликативные модификаторы. Гибрид ECS + SoA — ECS хранит именованные эффекты с длительностями, SoA хранит агрегированные модификаторы (`speed_mod`, `metabolism_mod`, `efficiency_mod`) для быстрых вычислений.
+
+| Эффект | speed | metabolism | efficiency | Duration | Источник |
+|--------|-------|-----------|-----------|----------|---------|
+| **Wound** | ×0.70 | ×1.30 | ×1.0 | max(30, damage×8) | Атака хищника (damage > 3) |
+| **Exhaustion** | ×0.60 | ×1.00 | ×1.0 | 30 тиков | Энергия < 10% max |
+
+- `ConditionSystem` — мост между ECS (Conditions component) и SoA (3 модификатор-массива). Пересчитывает модификаторы каждый тик после SensorSystem, до BehaviorSystem
+- Лимит 3 эффекта на сущность — защита от stack overflow
+- Мультипликативное сложение: wound(×0.7) × exhaustion(×0.6) = ×0.42
+- Wound замедляет раненую добычу (speed ×0.7), облегчая хищнику добивание (closing speed 3.9 вместо 3.0 ед/тик)
+
 ### Multiprocessing + Numba (завершено, коммит `1c7d8b2`):
 
 - `SharedEntityBuffer` (`core/shared_buffers.py`) — shared memory буфер для SoA-массивов, позволяет главному процессу читать данные для рендеринга
@@ -92,7 +104,7 @@
 ## Accomplished
 
 **Завершено (коммит `1c7d8b2`):**
-- Полный каркас проекта (ECS, 12 компонентов, 10 систем, рендеринг, камера, мир)
+- Полный каркас проекта (ECS, 13 компонентов, 11 систем, рендеринг, камера, мир)
 - Все 4 волны оптимизации производительности (SoA + stagger + numpy batch + numba JIT)
 - 9 итераций балансировки (size_gene bug, freeze/предаторы, экспоненциальный рост, behavior fix, энергетика охоты, predator viability v3, скрытые баги v4, структурный фикс v5, энергетическая состоятельность v7)
 - Multiprocessing режим (SimWorker + SharedEntityBuffer + SimulationMP)
@@ -106,6 +118,7 @@
 - Абиогенез: biomass decay + lightning spawning + biomass spawning
 - Плотностной контроль размножения (соседи + глобальный лимит)
 - Полная документация механик `md/mechanics.md`
+- Система состояний (Status Effects): wound/exhaustion, мультипликативные модификаторы speed/metabolism/efficiency, гибрид ECS+SoA
 
 ## Relevant files / directories
 
@@ -121,22 +134,24 @@ E:\Projects\Python\EmuLife\
 ├── core/
 │   ├── ecs.py                       # EntityManager с deferred cache, Component, System
 │   ├── world.py                     # Numpy-массивы: tile_types, food_values, max_foods, regen_rates, walkable_mask, biomass
-│   ├── entity_data.py               # SoA: 28 numpy-массивов (x,y,dx,dy,energy,health,age,genome data,habitat,repro_type,eids...)
+│   ├── entity_data.py               # SoA: 31 numpy-массив (x,y,dx,dy,energy,health,age,genome data,habitat,repro_type,speed_mod,metabolism_mod,efficiency_mod,eids...)
 │   ├── genome.py                    # 16-gene genome (0-11 used), crossover, mutate
 │   ├── camera.py                    # Pan/zoom, world↔screen, follow entity
 │   ├── shared_buffers.py            # SharedEntityBuffer — shared memory для multiprocessing
 │   └── sim_worker.py                # SimWorker — subprocess для симуляции
-├── components/                      # 12 dataclass-компонентов
+├── components/                      # 13 dataclass-компонентов
 │   ├── position.py, velocity.py, energy.py, health.py, age.py
 │   ├── genome_comp.py, appearance.py, sensor.py, metabolism.py
 │   ├── diet.py                      # DietType: HERBIVORE, OMNIVORE, PREDATOR
 │   ├── reproduction.py              # threshold, cooldown, max_cooldown, repro_type
-│   └── habitat.py                   # habitat_type: "aquatic"|"terrestrial"|"amphibious"
+│   ├── habitat.py                   # habitat_type: "aquatic"|"terrestrial"|"amphibious"
+│   └── conditions.py                # Condition + Conditions — именованные временные эффекты
 ├── systems/
 │   ├── sensor_system.py             # Staggered (BATCHES=2), numpy food search, habitat-aware, hungry-only
-    │   ├── behavior.py                  # Staggered, дерево (flee/hunt/eat/reproduce/wander), hunt speed ×2.0, scent hunting r=150, predator repro 0.7
+│   ├── condition_system.py          # ConditionSystem — decrement/recalculate/cleanup, ECS→SoA bridge
+│   ├── behavior.py                  # Staggered, дерево (flee/hunt/eat/reproduce/wander), hunt speed ×2.0, scent hunting r=150, predator repro 0.7
 │   ├── movement.py                  # Numpy-batch/numba, habitat-aware walkable mask, bounce, moved_mask
-    │   ├── interaction.py               # Spatial hash, predator damage_mult=25, attack radius=5, energy cap 1.5× max, kill bonus +30, blood_meal 20%
+│   ├── interaction.py               # Spatial hash, predator damage_mult=25, attack radius=5, energy cap 1.5× max, kill bonus +30, blood_meal 20%
 │   ├── energy_system.py             # Numba-batch/numba, predator metabolism ×0.5, habitat-aware can_eat, 1/N food share, biomass scavenging
 │   ├── aging.py                     # Numba kernel, max_age=800+size*200, health=0 on death
 │   ├── reproduction.py              # Asexual/sexual, density check, birth cap, predator partner radius ×2

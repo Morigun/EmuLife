@@ -46,6 +46,15 @@ class Minimap:
 
         self.surface.blit(self._world_surface, (0, 0))
 
+        if world.is_night or world.day_progress > 0.55:
+            if world.day_progress < 0.70:
+                alpha = int((world.day_progress - 0.55) / 0.15 * 60)
+            else:
+                alpha = 60
+            night_overlay = pygame.Surface((self.size, self.size), pygame.SRCALPHA)
+            night_overlay.fill((10, 10, 40, min(alpha, 60)))
+            self.surface.blit(night_overlay, (0, 0))
+
         self._entity_frame += 1
         if self._entity_surface is None or self._entity_frame >= self._entity_interval:
             self._entity_frame = 0
@@ -94,11 +103,13 @@ class Minimap:
         predator = visible & (ed.diet_type[:n] == 2)
         omnivore = visible & (ed.diet_type[:n] == 1)
         herbivore = visible & (ed.diet_type[:n] == 0)
+        plants = visible & (ed.diet_type[:n] == 3)
 
         for mask, color in [
             (predator, (255, 80, 80, 255)),
             (omnivore, (255, 255, 80, 255)),
             (herbivore, (80, 255, 80, 255)),
+            (plants, (0, 200, 100, 255)),
         ]:
             indices = np.where(mask)[0]
             for idx in indices:
@@ -116,6 +127,8 @@ class Minimap:
                 color = (255, 80, 80, 255)
             elif diet.diet_type == DietType.OMNIVORE:
                 color = (255, 255, 80, 255)
+            elif diet.diet_type == DietType.CARNIVOROUS_PLANT:
+                color = (0, 200, 100, 255)
             else:
                 color = (80, 255, 80, 255)
             if 0 <= mx < self.size and 0 <= my < self.size:

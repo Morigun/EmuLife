@@ -13,7 +13,7 @@ class WorldUpdateSystem(System):
         self._tick_counter += 1
         w: World = world
         if self._tick_counter % self._regen_interval == 0:
-            w.regenerate_all()
+            w.regenerate_all(w.food_regen_mult)
 
         decay = 1.0 - self.config.abiogenesis.biomass_decay_rate
         w.biomass *= decay

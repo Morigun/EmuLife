@@ -32,14 +32,14 @@ class EnergyConfig:
     predation_efficiency: float = 1.5
     asexual_reproduction_energy_cost: float = 0.5
     asexual_child_energy_fraction: float = 0.3
-    predator_child_energy_fraction: float = 0.70
+    predator_child_energy_fraction: float = 0.85
     blood_meal_fraction: float = 0.20
 
 
 @dataclass
 class ReproductionConfig:
     asexual_cooldown: int = 250
-    sexual_cooldown: int = 150
+    sexual_cooldown: int = 100
     max_births_per_tick: int = 5
     density_radius: float = 40.0
     density_max_neighbors: int = 8
@@ -80,6 +80,36 @@ class SpatialHashConfig:
 
 
 @dataclass
+class DayNightConfig:
+    cycle_ticks: int = 1200
+    dawn_start: float = 0.0
+    day_start: float = 0.15
+    dusk_start: float = 0.55
+    night_start: float = 0.70
+    day_food_regen_mult: float = 1.0
+    day_vision_mult: float = 1.0
+    day_metabolism_mult: float = 1.0
+    night_food_regen_mult: float = 0.3
+    night_vision_mult: float = 0.5
+    night_metabolism_mult: float = 0.8
+
+
+@dataclass
+class CarnivorousPlantConfig:
+    trap_base_radius: float = 8.0
+    trap_max_radius: float = 20.0
+    trap_damage_mult: float = 50.0
+    trap_cooldown_ticks: int = 20
+    photosynth_base_rate: float = 0.8
+    photosynth_night_mult: float = 0.3
+    spawn_spread: float = 3.0
+    max_trap_targets: int = 3
+    metabolism_mult: float = 0.4
+    night_dormancy_mult: float = 0.3
+    energy_cap_mult: float = 1.5
+
+
+@dataclass
 class Config:
     world: WorldConfig = WorldConfig()
     simulation: SimulationConfig = SimulationConfig()
@@ -90,3 +120,5 @@ class Config:
     spatial_hash: SpatialHashConfig = SpatialHashConfig()
     abiogenesis: AbiogenesisConfig = AbiogenesisConfig()
     reproduction: ReproductionConfig = ReproductionConfig()
+    day_night: DayNightConfig = DayNightConfig()
+    carnivorous_plant: CarnivorousPlantConfig = CarnivorousPlantConfig()

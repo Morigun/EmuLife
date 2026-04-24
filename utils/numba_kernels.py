@@ -67,7 +67,9 @@ def energy_update_kernel(
     x, y, dx_arr, dy_arr, energy, max_energy, metabolism, size_gene,
     diet_type, habitat, efficiency, alive,
     biomass,
-    food_values, tile_types, n, width, height, dt, energy_from_food
+    food_values, tile_types, n, width, height, dt, energy_from_food,
+    metabolism_mod, efficiency_mod,
+    photosynth, food_regen_mult
 ):
     total_tiles = width * height
 
@@ -80,6 +82,12 @@ def energy_update_kernel(
         cost += speed * raw_size * 0.5 * dt
         if diet_type[i] == 2:
             cost = cost * 0.5
+        if diet_type[i] == 3:
+            plant_metab = 0.4
+            if food_regen_mult < 0.5:
+                plant_metab *= 0.3
+            cost *= plant_metab
+        cost *= metabolism_mod[i]
         energy[i] -= cost
 
         if diet_type[i] == 2:
@@ -90,6 +98,18 @@ def energy_update_kernel(
                 scav = min(bio * 0.05, 3.0) * dt
                 energy[i] += scav
                 biomass[iy, ix] -= scav
+
+        if diet_type[i] == 3:
+            ix = min(max(int(x[i]), 0), width - 1)
+            iy = min(max(int(y[i]), 0), height - 1)
+            photo = photosynth[i] * food_regen_mult
+            tt = tile_types[iy, ix]
+            if tt == 2:
+                photo *= 1.3
+            elif tt == 3:
+                photo *= 0.3
+            photo *= 0.8 * dt
+            energy[i] += photo
 
     entity_count = np.zeros(total_tiles, dtype=np.float32)
     for i in range(n):
@@ -109,9 +129,10 @@ def energy_update_kernel(
 
         is_water = tile_types[iy, ix] == 0
         non_pred = diet_type[i] != 2
+        non_plant = diet_type[i] != 3
         food = food_values[iy, ix]
 
-        can_eat = non_pred and food > 0 and (
+        can_eat = non_pred and non_plant and food > 0 and (
             (habitat[i] == 0 and is_water)
             or (habitat[i] == 1 and not is_water)
             or (habitat[i] == 2)
@@ -121,7 +142,8 @@ def energy_update_kernel(
             count = entity_count[iy * width + ix]
             share = food / count if count > 0 else food
             eat_amount = min(energy_from_food * dt, share)
-            energy[i] += eat_amount * efficiency[i]
+            herb_bonus = 1.3 if diet_type[i] == 0 else 1.0
+            energy[i] += eat_amount * efficiency[i] * efficiency_mod[i] * herb_bonus
             tile_depletion[iy * width + ix] += eat_amount
 
     for i in range(n):
@@ -138,14 +160,19 @@ def energy_update_kernel(
 
     for i in range(n):
         if alive[i]:
-            cap = max_energy[i] * 1.5 if diet_type[i] == 2 else max_energy[i]
+            if diet_type[i] == 2:
+                cap = max_energy[i] * 1.5
+            elif diet_type[i] == 3:
+                cap = max_energy[i] * 1.5
+            else:
+                cap = max_energy[i]
             if energy[i] > cap:
                 energy[i] = cap
 
 
 @njit(parallel=True, cache=True)
 def movement_update_kernel(
-    x, y, dx_arr, dy_arr, habitat, alive,
+    x, y, dx_arr, dy_arr, habitat, alive, diet_type,
     tile_types, n, width, height, dt
 ):
     moved = np.zeros(n, dtype=np.bool_)
@@ -157,6 +184,12 @@ def movement_update_kernel(
         old_y_out[i] = y[i]
 
         if not alive[i]:
+            moved[i] = False
+            continue
+
+        if diet_type[i] == 3:
+            dx_arr[i] = 0.0
+            dy_arr[i] = 0.0
             moved[i] = False
             continue
 
@@ -177,11 +210,19 @@ def movement_update_kernel(
         is_water = tile_types[iy, ix] == 0
 
         h = habitat[i]
-        walkable = (
-            (h == 1 and not is_water)
-            or (h == 0 and is_water)
-            or (h == 2)
-        )
+        cur_ix = int(x[i])
+        cur_iy = int(y[i])
+        cur_is_water = tile_types[cur_iy, cur_ix] == 0
+        on_wrong_tile = (h == 1 and cur_is_water) or (h == 0 and not cur_is_water)
+
+        if on_wrong_tile:
+            walkable = True
+        else:
+            walkable = (
+                (h == 1 and not is_water)
+                or (h == 0 and is_water)
+                or (h == 2)
+            )
 
         if walkable:
             x[i] = new_x
@@ -210,6 +251,7 @@ def compute_stats_kernel(diet_type, alive, n):
     herb = 0
     omni = 0
     pred = 0
+    plant = 0
     for i in range(n):
         if not alive[i]:
             continue
@@ -220,7 +262,9 @@ def compute_stats_kernel(diet_type, alive, n):
             omni += 1
         elif d == 2:
             pred += 1
-    return herb, omni, pred
+        elif d == 3:
+            plant += 1
+    return herb, omni, pred, plant
 
 
 if HAS_NUMBA:
@@ -243,17 +287,21 @@ if HAS_NUMBA:
         max_age = np.ones(n, dtype=np.int32) * 1000
         hp = np.ones(n, dtype=np.float32) * 50.0
 
+        photosynth_arr = np.zeros(n, dtype=np.float32)
+
         energy_update_kernel(
             f32.copy(), f32.copy(), dx.copy(), dy.copy(),
             energy.copy(), max_e.copy(), metab.copy(), size_g.copy(),
             i8.copy(), i8.copy(), eff.copy(), bool_arr.copy(),
             bio_arr.copy(),
             food.copy(), tiles.copy(), n, 10, 10, 1.0, 15.0,
+            eff.copy(), eff.copy(),
+            photosynth_arr.copy(), 1.0,
         )
 
         movement_update_kernel(
             f32.copy(), f32.copy(), dx.copy(), dy.copy(),
-            i8.copy(), bool_arr.copy(), tiles.copy(), n, 10, 10, 1.0,
+            i8.copy(), bool_arr.copy(), i8.copy(), tiles.copy(), n, 10, 10, 1.0,
         )
 
         find_nearest_food_kernel(
