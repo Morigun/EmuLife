@@ -69,7 +69,7 @@ class Simulation:
 
         self.em = EntityManager()
         self.world = World(self.config)
-        self.spatial_hash = SpatialHash(self.config.spatial_hash.cell_size)
+        self.spatial_hash = SpatialHash(self.config.spatial_hash.cell_size, self.config.world.width, self.config.world.height)
         self.entity_data = EntityData()
         self.camera = Camera(
             x=self.config.world.width / 2,
@@ -79,16 +79,20 @@ class Simulation:
             screen_height=self.config.screen.height,
         )
 
+        self.sensor_system = SensorSystem(self.em, self.spatial_hash, self.config, self.entity_data)
         self.movement_system = MovementSystem(self.em, self.config, self.entity_data)
         self.reproduction_system = ReproductionSystem(self.em, self.spatial_hash, self.config, self.entity_data)
         self.abiogenesis_system = AbiogenesisSystem(self.em, self.spatial_hash, self.config, self.entity_data)
         self.death_system = DeathSystem(self.em, self.config, self.spatial_hash, self.entity_data)
 
+        self.behavior_system = BehaviorSystem(self.em, self.config, self.entity_data, self.spatial_hash)
+        self.behavior_system._sensor_system = self.sensor_system
+
         self.systems = [
             DayNightSystem(self.config),
-            SensorSystem(self.em, self.spatial_hash, self.config, self.entity_data),
+            self.sensor_system,
             ConditionSystem(self.em, self.config, self.entity_data),
-            BehaviorSystem(self.em, self.config, self.entity_data, self.spatial_hash),
+            self.behavior_system,
             self.movement_system,
             InteractionSystem(self.em, self.config, self.spatial_hash, self.entity_data),
             EnergySystem(self.em, self.config, self.entity_data),
@@ -172,23 +176,38 @@ class Simulation:
     def _update_spatial_hash_incremental(self) -> None:
         ed = self.entity_data
         moved_mask = self.movement_system.moved_mask
+        sh = self.spatial_hash
         if moved_mask is not None and len(moved_mask) > 0:
             indices = np.where(moved_mask)[0]
+            old_x_arr = self.movement_system.old_x
+            old_y_arr = self.movement_system.old_y
+            ed_x = ed.x
+            ed_y = ed.y
+            idx_to_eid = ed.idx_to_eid
+            entity_cells = sh._entity_cells
+
             for idx in indices:
-                eid = ed.idx_to_eid.get(int(idx))
+                idx_int = int(idx)
+                eid = idx_to_eid.get(idx_int)
                 if eid is None:
                     continue
-                old_x = float(self.movement_system.old_x[idx])
-                old_y = float(self.movement_system.old_y[idx])
-                new_x = float(ed.x[idx])
-                new_y = float(ed.y[idx])
-                if eid in self.spatial_hash._entity_cells:
-                    self.spatial_hash.update(eid, old_x, old_y, new_x, new_y)
+                if eid in entity_cells:
+                    ox = float(old_x_arr[idx_int])
+                    oy = float(old_y_arr[idx_int])
+                    nx = float(ed_x[idx_int])
+                    ny = float(ed_y[idx_int])
+                    old_cx = int(ox // sh.cell_size)
+                    old_cy = int(oy // sh.cell_size)
+                    new_cx = int(nx // sh.cell_size)
+                    new_cy = int(ny // sh.cell_size)
+                    if old_cx != new_cx or old_cy != new_cy:
+                        sh.remove(eid)
+                        sh.insert(eid, nx, ny)
                 else:
-                    self.spatial_hash.insert(eid, new_x, new_y)
+                    sh.insert(eid, float(ed_x[idx_int]), float(ed_y[idx_int]))
 
         for eid, x, y in self.reproduction_system.newborn_entities:
-            self.spatial_hash.insert(eid, x, y)
+            sh.insert(eid, x, y)
 
     def _handle_events(self) -> None:
         for event in pygame.event.get():

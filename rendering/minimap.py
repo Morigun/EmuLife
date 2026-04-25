@@ -24,6 +24,8 @@ class Minimap:
         self._entity_frame = 0
         self._entity_interval = 10
         self._entity_surface: pygame.Surface | None = None
+        self._night_surface: pygame.Surface | None = None
+        self._night_alpha: int = -1
 
     def _build_world_surface(self, world: World) -> pygame.Surface:
         indices = np.linspace(0, world.height - 1, self.size).astype(int)
@@ -51,15 +53,18 @@ class Minimap:
                 alpha = int((world.day_progress - 0.55) / 0.15 * 60)
             else:
                 alpha = 60
-            night_overlay = pygame.Surface((self.size, self.size), pygame.SRCALPHA)
-            night_overlay.fill((10, 10, 40, min(alpha, 60)))
-            self.surface.blit(night_overlay, (0, 0))
+            if alpha != self._night_alpha:
+                self._night_alpha = alpha
+                self._night_surface = pygame.Surface((self.size, self.size), pygame.SRCALPHA)
+                self._night_surface.fill((10, 10, 40, min(alpha, 60)))
+            self.surface.blit(self._night_surface, (0, 0))
 
         self._entity_frame += 1
         if self._entity_surface is None or self._entity_frame >= self._entity_interval:
             self._entity_frame = 0
-            self._entity_surface = pygame.Surface((self.size, self.size), pygame.SRCALPHA)
-            self._entity_surface.fill((0, 0, 0, 0))
+            self._entity_surface = pygame.Surface((self.size, self.size))
+            self._entity_surface.fill((1, 0, 1))
+            self._entity_surface.set_colorkey((1, 0, 1))
 
             scale_x = self.size / world.width
             scale_y = self.size / world.height
@@ -92,28 +97,29 @@ class Minimap:
         n = ed.count
         if n == 0:
             return
-
         alive = ed.alive[:n]
         mx = (ed.x[:n] * scale_x).astype(np.int32)
         my = (ed.y[:n] * scale_y).astype(np.int32)
-
         in_bounds = (mx >= 0) & (mx < self.size) & (my >= 0) & (my < self.size)
         visible = alive & in_bounds
 
-        predator = visible & (ed.diet_type[:n] == 2)
-        omnivore = visible & (ed.diet_type[:n] == 1)
-        herbivore = visible & (ed.diet_type[:n] == 0)
-        plants = visible & (ed.diet_type[:n] == 3)
-
+        arr = pygame.surfarray.pixels3d(self._entity_surface)
         for mask, color in [
-            (predator, (255, 80, 80, 255)),
-            (omnivore, (255, 255, 80, 255)),
-            (herbivore, (80, 255, 80, 255)),
-            (plants, (0, 200, 100, 255)),
+            (ed.diet_type[:n] == 2, (255, 80, 80)),
+            (ed.diet_type[:n] == 1, (255, 255, 80)),
+            (ed.diet_type[:n] == 0, (80, 255, 80)),
+            (ed.diet_type[:n] == 3, (0, 200, 100)),
         ]:
-            indices = np.where(mask)[0]
-            for idx in indices:
-                self._entity_surface.set_at((int(mx[idx]), int(my[idx])), color)
+            idxs = np.where(visible & mask)[0]
+            if len(idxs) == 0:
+                continue
+            px = mx[idxs]
+            py = my[idxs]
+            v = (px >= 0) & (px < self.size) & (py >= 0) & (py < self.size)
+            arr[px[v], py[v], 0] = color[0]
+            arr[px[v], py[v], 1] = color[1]
+            arr[px[v], py[v], 2] = color[2]
+        del arr
 
     def _draw_entities_ecs(self, entity_manager: EntityManager, scale_x: float, scale_y: float) -> None:
         for eid in entity_manager.get_entities_with(Position, Diet):
@@ -124,12 +130,12 @@ class Minimap:
             mx = int(pos.x * scale_x)
             my = int(pos.y * scale_y)
             if diet.diet_type == DietType.PREDATOR:
-                color = (255, 80, 80, 255)
+                color = (255, 80, 80)
             elif diet.diet_type == DietType.OMNIVORE:
-                color = (255, 255, 80, 255)
+                color = (255, 255, 80)
             elif diet.diet_type == DietType.CARNIVOROUS_PLANT:
-                color = (0, 200, 100, 255)
+                color = (0, 200, 100)
             else:
-                color = (80, 255, 80, 255)
+                color = (80, 255, 80)
             if 0 <= mx < self.size and 0 <= my < self.size:
                 self._entity_surface.set_at((mx, my), color)

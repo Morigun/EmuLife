@@ -1,25 +1,25 @@
 {
-  "tick": 11900,
+  "tick": 502200,
   "all_time": {
-    "abiogenesis": 1054,
-    "births_asexual": 3759,
-    "births_sexual": 1322,
-    "deaths": 5953,
-    "total_spawned": 6135
+    "abiogenesis": 48564,
+    "births_asexual": 170964,
+    "births_sexual": 20234,
+    "deaths": 239368,
+    "total_spawned": 239762
   },
   "per_tick_avg": {
-    "abiogenesis": 0.089,
-    "births_asexual": 0.316,
-    "births_sexual": 0.111,
-    "deaths": 0.5
+    "abiogenesis": 0.097,
+    "births_asexual": 0.34,
+    "births_sexual": 0.04,
+    "deaths": 0.477
   },
   "alive_now": {
-    "total": 382,
-    "asexual_repro": 259,
+    "total": 594,
+    "asexual_repro": 594,
     "sexual_repro": 0,
-    "hermaphrodite_repro": 123,
-    "origin_abio": 24,
-    "origin_born_asex": 220,
-    "origin_born_sex": 138
+    "hermaphrodite_repro": 0,
+    "origin_abio": 13,
+    "origin_born_asex": 580,
+    "origin_born_sex": 1
   }
 }

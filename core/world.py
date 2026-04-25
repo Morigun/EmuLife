@@ -114,6 +114,7 @@ class World:
         self.regen_rates = regen_rates
         self.food_values = max_foods * 0.5
         self.walkable_mask = tile_types != TileType.WATER
+        self._active_mask = self.regen_rates > 0
 
     def get_tile_type(self, x: int, y: int) -> int:
         if 0 <= x < self.width and 0 <= y < self.height:
@@ -142,8 +143,6 @@ class World:
         return False
 
     def regenerate_all(self, mult: float = 1.0) -> None:
-        active = self.regen_rates > 0
-        self.food_values[active] = np.minimum(
-            self.food_values[active] + self.regen_rates[active] * mult,
-            self.max_foods[active],
-        )
+        active = self._active_mask
+        np.add(self.food_values, self.regen_rates * mult, out=self.food_values, where=active)
+        np.minimum(self.food_values, self.max_foods, out=self.food_values)

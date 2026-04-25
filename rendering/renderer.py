@@ -12,11 +12,81 @@ from components.position import Position
 from components.appearance import Appearance
 from config import Config
 
+_COS_TABLE_5 = []
+_SIN_TABLE_5 = []
+for _a in range(5):
+    _angle = _a * 2 * math.pi / 5 - math.pi / 2
+    _COS_TABLE_5.append(math.cos(_angle))
+    _SIN_TABLE_5.append(math.sin(_angle))
+
+_COS_TABLE_6 = []
+_SIN_TABLE_6 = []
+for _a in range(6):
+    _angle = _a * math.pi / 3
+    _COS_TABLE_6.append(math.cos(_angle))
+    _SIN_TABLE_6.append(math.sin(_angle))
+
+_PI_OVER_3 = math.pi / 3
+
+_SHAPE_MASKS: dict[tuple[str, int], np.ndarray] = {}
+
+
+def _build_shape_masks():
+    for size in range(1, 11):
+        pts = []
+        for dy in range(-size, size + 1):
+            for dx in range(-size, size + 1):
+                if abs(dx) + abs(dy) <= size:
+                    pts.append((dx, dy))
+        _SHAPE_MASKS[('diamond', size)] = np.array(pts, dtype=np.int32)
+
+        pts = []
+        for dy in range(-size, size + 1):
+            for dx in range(-size, size + 1):
+                if dx * dx + dy * dy <= size * size:
+                    pts.append((dx, dy))
+        _SHAPE_MASKS[('circle', size)] = np.array(pts, dtype=np.int32)
+
+        pts = []
+        for dy in range(-size, size + 1):
+            half_w = int((dy + size) / (2 * size) * size) if size > 0 else 0
+            for dx in range(-half_w, half_w + 1):
+                pts.append((dx, dy))
+        _SHAPE_MASKS[('triangle', size)] = np.array(pts, dtype=np.int32)
+
+        pts = []
+        for dy in range(-size, size + 1):
+            for dx in range(-size, size + 1):
+                dist = (dx * dx + dy * dy) ** 0.5
+                if dist <= size:
+                    pts.append((dx, dy))
+        _SHAPE_MASKS[('pentagon', size)] = np.array(pts, dtype=np.int32)
+
+        pts = []
+        for dy in range(-size, size + 1):
+            for dx in range(-size, size + 1):
+                if abs(dx) + abs(dy) * 0.577 <= size:
+                    pts.append((dx, dy))
+        _SHAPE_MASKS[('hexagon', size)] = np.array(pts, dtype=np.int32)
+
+        pts = []
+        for dy in range(-size, size + 1):
+            for dx in range(-size, size + 1):
+                pts.append((dx, dy))
+        _SHAPE_MASKS[('square', size)] = np.array(pts, dtype=np.int32)
+
+
+_build_shape_masks()
+
+_SHAPE_NAMES = ['diamond', 'square', 'triangle', 'pentagon', 'circle', 'hexagon']
+
 
 class Renderer:
     def __init__(self, screen: pygame.Surface, config: Config) -> None:
         self.screen = screen
         self.config = config
+        self._night_overlay: pygame.Surface | None = None
+        self._night_darkness: int = -1
 
     def render_world(self, world: World, camera: Camera) -> None:
         left, top, right, bottom = camera.visible_bounds()
@@ -194,64 +264,85 @@ class Renderer:
         sy_all = (ed.y[:n] - camera.y) * camera.zoom + camera.screen_height / 2
 
         visible = (
-            (sx_all > -20)
-            & (sx_all < camera.screen_width + 20)
-            & (sy_all > -20)
-            & (sy_all < camera.screen_height + 20)
+            (sx_all > -20) & (sx_all < camera.screen_width + 20)
+            & (sy_all > -20) & (sy_all < camera.screen_height + 20)
             & ed.alive[:n]
         )
+        visible_indices = np.where(visible)[0]
+        if len(visible_indices) == 0:
+            return
 
-        for idx in np.where(visible)[0]:
-            idx = int(idx)
-            screen_x = float(sx_all[idx])
-            screen_y = float(sy_all[idx])
-            radius = max(1, int(ed.size_gene[idx] * camera.zoom * 0.5))
+        screen_arr = pygame.surfarray.pixels3d(self.screen)
+        sw, sh = screen_arr.shape[0], screen_arr.shape[1]
+        zoom = camera.zoom
 
-            color = (int(ed.r[idx]), int(ed.g[idx]), int(ed.b[idx]))
+        ix = sx_all[visible_indices].astype(np.int32)
+        iy = sy_all[visible_indices].astype(np.int32)
+        mask = (ix >= 0) & (ix < sw) & (iy >= 0) & (iy < sh)
+        ix = ix[mask]
+        iy = iy[mask]
+        idxs = visible_indices[mask]
+        r_arr = ed.r[idxs].astype(np.uint8)
+        g_arr = ed.g[idxs].astype(np.uint8)
+        b_arr = ed.b[idxs].astype(np.uint8)
 
-            diet_int = int(ed.diet_type[idx])
-            repro_type_int = int(ed.repro_type[idx])
-            habitat_int = int(ed.habitat[idx])
+        diet = ed.diet_type[idxs]
+        repro = ed.repro_type[idxs]
+        habitat = ed.habitat[idxs]
 
-            if diet_int == 3:
-                r = radius
-                pts = []
-                for a in range(6):
-                    angle = a * math.pi / 3
-                    pts.append((int(screen_x + r * math.cos(angle)),
-                                int(screen_y + r * math.sin(angle))))
-                pygame.draw.polygon(self.screen, color, pts)
-            elif diet_int == 2:
-                r = radius
-                points = [
-                    (int(screen_x), int(screen_y - r)),
-                    (int(screen_x - r), int(screen_y + r)),
-                    (int(screen_x + r), int(screen_y + r)),
-                ]
-                pygame.draw.polygon(self.screen, color, points)
-            elif repro_type_int == 0:
-                r = radius
-                points = [
-                    (int(screen_x), int(screen_y - r)),
-                    (int(screen_x + r), int(screen_y)),
-                    (int(screen_x), int(screen_y + r)),
-                    (int(screen_x - r), int(screen_y)),
-                ]
-                pygame.draw.polygon(self.screen, color, points)
-            elif repro_type_int == 2:
-                r = radius
-                pts = []
-                for a in range(5):
-                    angle = a * 2 * math.pi / 5 - math.pi / 2
-                    pts.append((int(screen_x + r * math.cos(angle)),
-                                int(screen_y + r * math.sin(angle))))
-                pygame.draw.polygon(self.screen, color, pts)
-            elif habitat_int == 0:
-                r = radius
-                rect = pygame.Rect(int(screen_x - r), int(screen_y - r), r * 2, r * 2)
-                pygame.draw.rect(self.screen, color, rect)
-            else:
-                pygame.draw.circle(self.screen, color, (int(screen_x), int(screen_y)), radius)
+        shape_ids = np.full(len(idxs), 4, dtype=np.int8)
+        shape_ids[diet == 2] = 2
+        shape_ids[diet == 3] = 5
+        shape_ids[(diet != 2) & (diet != 3) & (repro == 0)] = 0
+        shape_ids[(diet != 2) & (diet != 3) & (repro == 2)] = 3
+        shape_ids[(diet != 2) & (diet != 3) & (repro == 1) & (habitat == 0)] = 1
+
+        raw_sizes = (ed.size_gene[idxs] * zoom * 0.5).astype(np.int32)
+        quant_sizes = np.clip(raw_sizes, 1, 10)
+
+        group_keys = shape_ids.astype(np.int32) * 11 + quant_sizes
+        unique_keys = np.unique(group_keys)
+
+        for key in unique_keys:
+            g_mask = group_keys == key
+            shape_id = int(key // 11)
+            size = int(key % 11)
+            shape_name = _SHAPE_NAMES[shape_id]
+
+            smask = _SHAPE_MASKS.get((shape_name, size))
+            if smask is None:
+                smask = _SHAPE_MASKS[('circle', size)]
+
+            g_ix = ix[g_mask]
+            g_iy = iy[g_mask]
+            g_r = r_arr[g_mask]
+            g_g = g_arr[g_mask]
+            g_b = b_arr[g_mask]
+
+            n_ents = len(g_ix)
+            n_pixels = len(smask)
+
+            offsets_dx = smask[:, 0]
+            offsets_dy = smask[:, 1]
+
+            all_px = np.repeat(g_ix, n_pixels) + np.tile(offsets_dx, n_ents)
+            all_py = np.repeat(g_iy, n_pixels) + np.tile(offsets_dy, n_ents)
+            all_r = np.repeat(g_r, n_pixels)
+            all_g = np.repeat(g_g, n_pixels)
+            all_b = np.repeat(g_b, n_pixels)
+
+            valid = (all_px >= 0) & (all_px < sw) & (all_py >= 0) & (all_py < sh)
+            all_px = all_px[valid]
+            all_py = all_py[valid]
+            all_r = all_r[valid]
+            all_g = all_g[valid]
+            all_b = all_b[valid]
+
+            screen_arr[all_px, all_py, 0] = all_r
+            screen_arr[all_px, all_py, 1] = all_g
+            screen_arr[all_px, all_py, 2] = all_b
+
+        del screen_arr
 
     def render_selected(self, entity_manager: EntityManager, camera: Camera, selected_id: int | None, entity_data: EntityData = None) -> None:
         if selected_id is None:
@@ -283,13 +374,18 @@ class Renderer:
     def render_night_overlay(self, world: World) -> None:
         p = world.day_progress
         if p < 0.55:
+            self._night_darkness = -1
             return
         if p < 0.70:
             darkness = int((p - 0.55) / 0.15 * 80)
         else:
             darkness = 80
         if darkness <= 0:
+            self._night_darkness = -1
             return
-        overlay = pygame.Surface(self.screen.get_size(), pygame.SRCALPHA)
-        overlay.fill((10, 10, 40, min(darkness, 80)))
-        self.screen.blit(overlay, (0, 0))
+        if darkness != self._night_darkness:
+            self._night_darkness = darkness
+            size = self.screen.get_size()
+            self._night_overlay = pygame.Surface(size, pygame.SRCALPHA)
+            self._night_overlay.fill((10, 10, 40, min(darkness, 80)))
+        self.screen.blit(self._night_overlay, (0, 0))

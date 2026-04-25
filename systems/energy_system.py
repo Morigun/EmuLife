@@ -12,6 +12,14 @@ class EnergySystem(System):
         self.em = entity_manager
         self.config = config
         self.entity_data = entity_data
+        self._entity_count = None
+        self._tile_depletion = None
+
+    def _ensure_workspace(self, width: int, height: int):
+        total = width * height
+        if self._entity_count is None or len(self._entity_count) != total:
+            self._entity_count = np.zeros(total, dtype=np.float32)
+            self._tile_depletion = np.zeros(total, dtype=np.float32)
 
     def update(self, world: object, dt: float) -> None:
         if self.entity_data is None:
@@ -26,6 +34,7 @@ class EnergySystem(System):
         n = ed.count
 
         if HAS_NUMBA:
+            self._ensure_workspace(w.width, w.height)
             energy_update_kernel(
                 ed.x, ed.y, ed.dx, ed.dy, ed.energy, ed.max_energy,
                 ed.metabolism, ed.size_gene, ed.diet_type, ed.habitat,
@@ -35,6 +44,7 @@ class EnergySystem(System):
                 n, w.width, w.height, dt, ec.energy_from_food,
                 ed.metabolism_mod, ed.efficiency_mod,
                 ed.photosynth, w.food_regen_mult,
+                self._entity_count, self._tile_depletion,
             )
             return
 

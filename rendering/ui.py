@@ -34,6 +34,24 @@ class UI:
         self._stats_cache_tick = 0
         self._stats_cache_interval = 30
         self._cached_stats = (0, 0, 0, 0, 0, 0.0, 0, 0, 0, 0, 0, 0)
+        self._help_surfaces: list[tuple[pygame.Surface, pygame.Surface]] = []
+        self._help_built = False
+        self._prev_stats_lines: list[str] | None = None
+        self._prev_stats_surfaces: list[tuple[pygame.Surface, pygame.Surface]] = []
+
+    def _build_help_cache(self) -> None:
+        if self._help_built:
+            return
+        lines = [
+            "WASD: Pan | Scroll: Zoom | F: Follow | Click: Select",
+            "+/-: Speed | Space: Pause | H: Toggle stats | Esc: Quit",
+        ]
+        for line in lines:
+            surf = self.font_small.render(line, True, (200, 200, 200))
+            bg = pygame.Surface((surf.get_width() + 6, surf.get_height() + 2), pygame.SRCALPHA)
+            bg.fill((0, 0, 0, 140))
+            self._help_surfaces.append((bg, surf))
+        self._help_built = True
 
     def render_stats(
         self,
@@ -110,11 +128,16 @@ class UI:
             lines.append(f"All: abio={c['abiogenesis']} b(a)={c['births_asexual']} b(s)={c['births_sexual']} d={c['deaths']}")
             lines.append(f"Avg: abio={c['abiogenesis']/t:.2f} b(a)={c['births_asexual']/t:.2f} b(s)={c['births_sexual']/t:.2f}")
 
+        if lines != self._prev_stats_lines:
+            self._prev_stats_lines = lines
+            self._prev_stats_surfaces = []
+            for line in lines:
+                surf = self.font_small.render(line, True, (255, 255, 255))
+                bg = pygame.Surface((surf.get_width() + 6, surf.get_height() + 2), pygame.SRCALPHA)
+                bg.fill((0, 0, 0, 160))
+                self._prev_stats_surfaces.append((bg, surf))
         y = 5
-        for line in lines:
-            surf = self.font_small.render(line, True, (255, 255, 255))
-            bg = pygame.Surface((surf.get_width() + 6, surf.get_height() + 2), pygame.SRCALPHA)
-            bg.fill((0, 0, 0, 160))
+        for bg, surf in self._prev_stats_surfaces:
             self.screen.blit(bg, (4, y))
             self.screen.blit(surf, (7, y + 1))
             y += 18
@@ -242,15 +265,9 @@ class UI:
             self.screen.blit(surf, (panel_x + 5, panel_y + 5 + i * 18))
 
     def render_help(self) -> None:
-        lines = [
-            "WASD: Pan | Scroll: Zoom | F: Follow | Click: Select",
-            "+/-: Speed | Space: Pause | H: Toggle stats | Esc: Quit",
-        ]
+        self._build_help_cache()
         y = self.screen.get_height() - 38
-        for line in lines:
-            surf = self.font_small.render(line, True, (200, 200, 200))
-            bg = pygame.Surface((surf.get_width() + 6, surf.get_height() + 2), pygame.SRCALPHA)
-            bg.fill((0, 0, 0, 140))
+        for bg, surf in self._help_surfaces:
             self.screen.blit(bg, (4, y))
             self.screen.blit(surf, (7, y + 1))
             y += 18

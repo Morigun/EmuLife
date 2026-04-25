@@ -14,7 +14,7 @@ from core.world import World
 from utils.spatial_hash import SpatialHash
 from config import Config
 
-STAGGER_BATCHES = 2
+STAGGER_BATCHES = 6
 
 
 class BehaviorSystem(System):
@@ -38,6 +38,20 @@ class BehaviorSystem(System):
         current_batch = self.tick % STAGGER_BATCHES
         n = ed.count
 
+        sensor_sys = getattr(self, '_sensor_system', None)
+        nearby_eids = sensor_sys.nearby_eids if sensor_sys else None
+        nearby_dist = sensor_sys.nearby_dist if sensor_sys else None
+        nearby_diet = sensor_sys.nearby_diet if sensor_sys else None
+        nearby_count = sensor_sys.nearby_count if sensor_sys else None
+        food_x = sensor_sys.food_x if sensor_sys else None
+        food_y = sensor_sys.food_y if sensor_sys else None
+
+        use_soa_nearby = nearby_eids is not None
+
+        _scent_set = self._scent_set
+        sh = self.spatial_hash
+        em = self.em
+
         for idx in range(n):
             if not ed.alive[idx]:
                 continue
@@ -48,54 +62,56 @@ class BehaviorSystem(System):
             if diet_int == 3:
                 ed.dx[idx] = 0.0
                 ed.dy[idx] = 0.0
-                eid = ed.idx_to_eid.get(idx)
-                if eid is not None:
-                    vel = self.em.get_component(eid, Velocity)
-                    if vel:
-                        vel.dx = 0.0
-                        vel.dy = 0.0
-                continue
-
-            eid = ed.idx_to_eid.get(idx)
-            if eid is None:
-                continue
-
-            sensor = self.em.get_component(eid, Sensor)
-            if sensor is None:
                 continue
 
             px, py = ed.x[idx], ed.y[idx]
             max_speed = float(ed.speed_gene[idx]) * float(ed.speed_mod[idx])
 
             target_dx, target_dy = 0.0, 0.0
-            action = self._decide_soa(idx, eid, ed, sensor)
+            action = "wander"
+
+            if use_soa_nearby:
+                action = self._decide_soa_fast(idx, ed, nearby_diet, nearby_count)
+            else:
+                eid = ed.idx_to_eid.get(idx)
+                if eid is not None:
+                    sensor = em.get_component(eid, Sensor)
+                    if sensor is not None:
+                        action = self._decide_soa(idx, eid, ed, sensor)
 
             if action == "flee":
-                target_dx, target_dy = self._flee_soa(idx, sensor, ed)
+                target_dx, target_dy = self._flee_soa_fast(idx, ed, nearby_eids, nearby_diet, nearby_count) if use_soa_nearby else self._flee_soa(idx, None, ed)
                 if target_dx == 0.0 and target_dy == 0.0:
                     target_dx = random.uniform(-1, 1)
                     target_dy = random.uniform(-1, 1)
             elif action == "hunt":
-                target_dx, target_dy = self._hunt_soa(idx, sensor, ed)
+                target_dx, target_dy = self._hunt_soa_fast(idx, ed, nearby_eids, nearby_diet, nearby_count) if use_soa_nearby else self._hunt_soa(idx, None, ed)
                 if target_dx == 0.0 and target_dy == 0.0:
                     target_dx = random.uniform(-1, 1)
                     target_dy = random.uniform(-1, 1)
             elif action == "reproduce":
-                target_dx, target_dy = self._seek_mate_soa(idx, eid, sensor, ed)
+                target_dx, target_dy = self._seek_mate_soa_fast(idx, ed, nearby_eids, nearby_diet, nearby_count) if use_soa_nearby else self._seek_mate_soa(idx, None, None, ed)
                 if target_dx == 0.0 and target_dy == 0.0:
                     target_dx = random.uniform(-1, 1)
                     target_dy = random.uniform(-1, 1)
             elif action == "eat":
-                target_dx, target_dy = self._seek_food_soa(idx, sensor, ed, world)
+                if use_soa_nearby and food_x is not None:
+                    target_dx, target_dy = self._seek_food_soa_fast(idx, ed, food_x, food_y, world)
+                else:
+                    target_dx, target_dy = self._seek_food_soa(idx, None, ed, world)
                 if target_dx == 0.0 and target_dy == 0.0:
                     target_dx = random.uniform(-1, 1)
                     target_dy = random.uniform(-1, 1)
             else:
-                diet_int = int(ed.diet_type[idx])
-                if diet_int == 2 and self.spatial_hash is not None:
-                    scent_dx, scent_dy = self._scent_hunt(idx, eid, ed, px, py)
-                    if scent_dx != 0.0 or scent_dy != 0.0:
-                        target_dx, target_dy = scent_dx, scent_dy
+                if diet_int == 2 and sh is not None:
+                    eid = ed.idx_to_eid.get(idx)
+                    if eid is not None:
+                        scent_dx, scent_dy = self._scent_hunt(idx, eid, ed, px, py)
+                        if scent_dx != 0.0 or scent_dy != 0.0:
+                            target_dx, target_dy = scent_dx, scent_dy
+                        else:
+                            target_dx = random.uniform(-1, 1)
+                            target_dy = random.uniform(-1, 1)
                     else:
                         target_dx = random.uniform(-1, 1)
                         target_dy = random.uniform(-1, 1)
@@ -115,10 +131,87 @@ class BehaviorSystem(System):
             ed.dx[idx] = target_dx * max_speed
             ed.dy[idx] = target_dy * max_speed
 
-            vel = self.em.get_component(eid, Velocity)
-            if vel:
-                vel.dx = target_dx * max_speed
-                vel.dy = target_dy * max_speed
+    def _decide_soa_fast(self, idx, ed, nearby_diet, nearby_count):
+        low_energy = ed.energy[idx] < ed.max_energy[idx] * 0.3
+        diet_int = int(ed.diet_type[idx])
+        nc = int(nearby_count[idx])
+
+        if diet_int == 2:
+            limit = min(nc, 8)
+            for j in range(limit):
+                nd = int(nearby_diet[idx, j])
+                if nd != 2 and nd != 3:
+                    return "hunt"
+
+        if diet_int in (0, 1):
+            limit = min(nc, 5)
+            for j in range(limit):
+                if int(nearby_diet[idx, j]) == 2:
+                    return "flee"
+
+        if low_energy:
+            if diet_int != 2:
+                return "eat"
+
+        repro_type_int = int(ed.repro_type[idx])
+        if repro_type_int in (1, 2):
+            if ed.repro_cooldown[idx] <= 0:
+                repro_threshold = float(ed.repro_threshold[idx]) * ed.max_energy[idx]
+                if ed.energy[idx] > repro_threshold:
+                    return "reproduce"
+
+        return "wander"
+
+    def _flee_soa_fast(self, idx, ed, nearby_eids, nearby_diet, nearby_count):
+        px, py = ed.x[idx], ed.y[idx]
+        dx, dy = 0.0, 0.0
+        nc = int(nearby_count[idx])
+        limit = min(nc, 5)
+        for j in range(limit):
+            if int(nearby_diet[idx, j]) == 2:
+                nid = int(nearby_eids[idx, j])
+                n_idx = ed.eid_to_idx.get(nid)
+                if n_idx is not None:
+                    dx += px - ed.x[n_idx]
+                    dy += py - ed.y[n_idx]
+        return dx, dy
+
+    def _hunt_soa_fast(self, idx, ed, nearby_eids, nearby_diet, nearby_count):
+        px, py = ed.x[idx], ed.y[idx]
+        nc = int(nearby_count[idx])
+        for j in range(nc):
+            nd = int(nearby_diet[idx, j])
+            if nd != 2 and nd != 3:
+                nid = int(nearby_eids[idx, j])
+                n_idx = ed.eid_to_idx.get(nid)
+                if n_idx is not None:
+                    return ed.x[n_idx] - px, ed.y[n_idx] - py
+        return 0.0, 0.0
+
+    def _seek_mate_soa_fast(self, idx, ed, nearby_eids, nearby_diet, nearby_count):
+        diet_int = int(ed.diet_type[idx])
+        nc = int(nearby_count[idx])
+        for j in range(nc):
+            if int(nearby_diet[idx, j]) == diet_int:
+                nid = int(nearby_eids[idx, j])
+                n_idx = ed.eid_to_idx.get(nid)
+                if n_idx is not None and ed.repro_cooldown[n_idx] <= 0:
+                    return ed.x[n_idx] - ed.x[idx], ed.y[n_idx] - ed.y[idx]
+        return 0.0, 0.0
+
+    def _seek_food_soa_fast(self, idx, ed, food_x, food_y, world=None):
+        if world is not None:
+            w = world
+            ix = int(ed.x[idx])
+            iy = int(ed.y[idx])
+            if 0 <= ix < w.width and 0 <= iy < w.height:
+                if w.food_values[iy, ix] > 5.0:
+                    return 0.0, 0.0
+        fx = float(food_x[idx])
+        fy = float(food_y[idx])
+        if fx >= 0:
+            return fx - ed.x[idx], fy - ed.y[idx]
+        return 0.0, 0.0
 
     def _decide_soa(self, idx, eid, ed, sensor):
         low_energy = ed.energy[idx] < ed.max_energy[idx] * 0.3
@@ -151,21 +244,23 @@ class BehaviorSystem(System):
     def _flee_soa(self, idx, sensor, ed):
         px, py = ed.x[idx], ed.y[idx]
         dx, dy = 0.0, 0.0
-        for nb in sensor.nearby_entities[:5]:
-            if nb.diet_type == DietType.PREDATOR:
-                n_idx = ed.eid_to_idx.get(nb.eid)
-                if n_idx is not None:
-                    dx += px - ed.x[n_idx]
-                    dy += py - ed.y[n_idx]
+        if sensor:
+            for nb in sensor.nearby_entities[:5]:
+                if nb.diet_type == DietType.PREDATOR:
+                    n_idx = ed.eid_to_idx.get(nb.eid)
+                    if n_idx is not None:
+                        dx += px - ed.x[n_idx]
+                        dy += py - ed.y[n_idx]
         return dx, dy
 
     def _hunt_soa(self, idx, sensor, ed):
         px, py = ed.x[idx], ed.y[idx]
-        for nb in sensor.nearby_entities:
-            if nb.diet_type is not None and nb.diet_type != DietType.PREDATOR:
-                n_idx = ed.eid_to_idx.get(nb.eid)
-                if n_idx is not None:
-                    return ed.x[n_idx] - px, ed.y[n_idx] - py
+        if sensor:
+            for nb in sensor.nearby_entities:
+                if nb.diet_type is not None and nb.diet_type != DietType.PREDATOR:
+                    n_idx = ed.eid_to_idx.get(nb.eid)
+                    if n_idx is not None:
+                        return ed.x[n_idx] - px, ed.y[n_idx] - py
         return 0.0, 0.0
 
     def _seek_food_soa(self, idx, sensor, ed, world=None):
@@ -176,19 +271,19 @@ class BehaviorSystem(System):
             if 0 <= ix < w.width and 0 <= iy < w.height:
                 if w.food_values[iy, ix] > 5.0:
                     return 0.0, 0.0
-        if sensor.nearest_food_pos:
+        if sensor and sensor.nearest_food_pos:
             fx, fy = sensor.nearest_food_pos
             return fx - ed.x[idx], fy - ed.y[idx]
         return 0.0, 0.0
 
     def _seek_mate_soa(self, idx, eid, sensor, ed):
         diet_int = int(ed.diet_type[idx])
-        my_diet = {0: DietType.HERBIVORE, 1: DietType.OMNIVORE, 2: DietType.PREDATOR}.get(diet_int, DietType.HERBIVORE)
-        for nb in sensor.nearby_entities:
-            if nb.diet_type == my_diet:
-                n_idx = ed.eid_to_idx.get(nb.eid)
-                if n_idx is not None and ed.repro_cooldown[n_idx] <= 0:
-                    return ed.x[n_idx] - ed.x[idx], ed.y[n_idx] - ed.y[idx]
+        if sensor:
+            for nb in sensor.nearby_entities:
+                if nb.diet_type is not None:
+                    n_idx = ed.eid_to_idx.get(nb.eid)
+                    if n_idx is not None and int(ed.diet_type[n_idx]) == diet_int and ed.repro_cooldown[n_idx] <= 0:
+                        return ed.x[n_idx] - ed.x[idx], ed.y[n_idx] - ed.y[idx]
         return 0.0, 0.0
 
     def _scent_hunt(self, idx, eid, ed, px, py):
@@ -202,7 +297,7 @@ class BehaviorSystem(System):
             if n_idx is None or not ed.alive[n_idx]:
                 continue
             nd = int(ed.diet_type[n_idx])
-            if nd == 2:
+            if nd == 2 or nd == 3:
                 continue
             ddx = float(ed.x[n_idx]) - px
             ddy = float(ed.y[n_idx]) - py
@@ -228,7 +323,6 @@ class BehaviorSystem(System):
                 continue
 
             genome_comp = self.em.get_component(eid, GenomeComp)
-            diet = self.em.get_component(eid, Diet)
             repro = self.em.get_component(eid, Reproduction)
 
             max_speed = self._max_speed(genome_comp)

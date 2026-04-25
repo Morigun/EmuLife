@@ -13,9 +13,11 @@ from utils.numba_kernels import find_nearest_food_kernel, HAS_NUMBA
 from core.world import World
 from config import Config
 
-STAGGER_BATCHES = 2
+STAGGER_BATCHES = 6
 
 _DIET_INT_TO_TYPE = {0: DietType.HERBIVORE, 1: DietType.OMNIVORE, 2: DietType.PREDATOR}
+
+NEARBY_MAX = 16
 
 
 class SensorSystem(System):
@@ -26,6 +28,14 @@ class SensorSystem(System):
         self.entity_data = entity_data
         self.tick = 0
         self._nearby_set: set[int] = set()
+
+        self.nearby_eids = np.full((EntityData.MAX_ENTITIES, NEARBY_MAX), -1, dtype=np.int32)
+        self.nearby_dist = np.full((EntityData.MAX_ENTITIES, NEARBY_MAX), 1e18, dtype=np.float32)
+        self.nearby_diet = np.full((EntityData.MAX_ENTITIES, NEARBY_MAX), -1, dtype=np.int8)
+        self.nearby_count = np.zeros(EntityData.MAX_ENTITIES, dtype=np.int32)
+
+        self.food_x = np.full(EntityData.MAX_ENTITIES, -1.0, dtype=np.float32)
+        self.food_y = np.full(EntityData.MAX_ENTITIES, -1.0, dtype=np.float32)
 
     def update(self, world: object, dt: float) -> None:
         w: World = world
@@ -42,49 +52,87 @@ class SensorSystem(System):
         current_batch = self.tick % STAGGER_BATCHES
         n = ed.count
 
+        nearby_eids = self.nearby_eids
+        nearby_dist = self.nearby_dist
+        nearby_diet_arr = self.nearby_diet
+        nearby_count = self.nearby_count
+        food_x = self.food_x
+        food_y = self.food_y
+        sh = self.spatial_hash
+
+        ed_x = ed.x
+        ed_y = ed.y
+        ed_alive = ed.alive
+        ed_diet_type = ed.diet_type
+        ed_energy = ed.energy
+        ed_max_energy = ed.max_energy
+        ed_vision = ed.vision
+        ed_habitat = ed.habitat
+        ed_eid_to_idx = ed.eid_to_idx
+        ed_idx_to_eid = ed.idx_to_eid
+
+        vision_mult = w.vision_mult
+
         for idx in range(n):
-            if not ed.alive[idx]:
+            if not ed_alive[idx]:
                 continue
             if idx % STAGGER_BATCHES != current_batch:
                 continue
 
-            eid = ed.idx_to_eid.get(idx)
+            eid = ed_idx_to_eid.get(idx)
             if eid is None:
                 continue
 
-            px, py = ed.x[idx], ed.y[idx]
-            radius = ed.vision[idx] * w.vision_mult
+            px = float(ed_x[idx])
+            py = float(ed_y[idx])
+            radius = float(ed_vision[idx]) * vision_mult
             radius_sq = radius * radius
 
-            self.spatial_hash.query_nearby_excluding_into(px, py, radius, eid, _nearby)
+            old_count = int(nearby_count[idx])
+            if old_count > 0:
+                nearby_eids[idx, :old_count] = -1
+                nearby_dist[idx, :old_count] = 1e18
+                nearby_diet_arr[idx, :old_count] = -1
+            nearby_count[idx] = 0
+            food_x[idx] = -1.0
+            food_y[idx] = -1.0
 
-            filtered = []
+            sh.query_nearby_excluding_into(px, py, radius, eid, _nearby)
+
+            count = 0
             for nid in _nearby:
-                n_idx = ed.eid_to_idx.get(nid)
-                if n_idx is None or not ed.alive[n_idx]:
+                if count >= NEARBY_MAX:
+                    break
+                n_idx = ed_eid_to_idx.get(nid)
+                if n_idx is None or not ed_alive[n_idx]:
                     continue
-                dx = ed.x[n_idx] - px
-                dy = ed.y[n_idx] - py
+                dx = float(ed_x[n_idx]) - px
+                dy = float(ed_y[n_idx]) - py
                 dist_sq = dx * dx + dy * dy
                 if dist_sq <= radius_sq:
-                    diet_int = int(ed.diet_type[n_idx])
-                    diet_type = _DIET_INT_TO_TYPE.get(diet_int)
-                    filtered.append(NearbyEntity(eid=nid, dist=dist_sq ** 0.5, diet_type=diet_type))
+                    nearby_eids[idx, count] = nid
+                    nearby_dist[idx, count] = dist_sq ** 0.5
+                    nearby_diet_arr[idx, count] = int(ed_diet_type[n_idx])
+                    count += 1
 
-            filtered.sort(key=lambda x: x.dist)
+            if count > 1:
+                order = np.argsort(nearby_dist[idx, :count])
+                tmp_eids = nearby_eids[idx, :count].copy()
+                tmp_dist = nearby_dist[idx, :count].copy()
+                tmp_diet = nearby_diet_arr[idx, :count].copy()
+                for j in range(count):
+                    nearby_eids[idx, j] = tmp_eids[order[j]]
+                    nearby_dist[idx, j] = tmp_dist[order[j]]
+                    nearby_diet_arr[idx, j] = tmp_diet[order[j]]
 
-            sensor = self.em.get_component(eid, Sensor)
-            if sensor:
-                sensor.nearby_entities = filtered
+            nearby_count[idx] = count
 
-                hungry = ed.energy[idx] < ed.max_energy[idx] * 0.5
-                cache_expired = self.tick - sensor.food_cache_tick >= sensor.food_cache_interval
-                if not hungry:
-                    sensor.nearest_food_pos = None
-                elif cache_expired:
-                    habitat_int = int(ed.habitat[idx])
-                    sensor.nearest_food_pos = self._find_nearest_food(w, px, py, radius, habitat_int)
-                    sensor.food_cache_tick = self.tick
+            if ed_energy[idx] < ed_max_energy[idx] * 0.5:
+                habitat_int = int(ed_habitat[idx])
+                pos = self._find_nearest_food(w, px, py, radius, habitat_int)
+                if pos is not None:
+                    food_x[idx] = pos[0]
+                    food_y[idx] = pos[1]
 
     def _update_ecs(self, w: World, _nearby: set[int]) -> None:
         for eid in self.em.get_entities_with(Position, Sensor):

@@ -330,6 +330,30 @@ class ReproductionSystem(System):
             else:
                 partner_id = self._find_partner(eid, pos, diet.diet_type)
                 if partner_id is None:
+                    if random.random() < 0.01:
+                        child_genome = genome_comp.genome.mutate(self.config)
+                        parent_sum = energy_val
+                        cx = pos.x + random.uniform(-5.0, 5.0)
+                        cy = pos.y + random.uniform(-5.0, 5.0)
+                        cx = max(0.0, min(float(w.width - 1), cx))
+                        cy = max(0.0, min(float(w.height - 1), cy))
+                        cost = self.config.energy.asexual_reproduction_energy_cost
+                        new_energy = energy_val * (1.0 - cost)
+                        ed.energy[idx_int] = new_energy
+                        energy_comp = self.em.get_component(eid, Energy)
+                        if energy_comp:
+                            energy_comp.current = new_energy
+                        cd = self.config.reproduction.sexual_cooldown
+                        ed.repro_cooldown[idx_int] = cd
+                        ed.repro_max_cooldown[idx_int] = cd
+                        if repro:
+                            repro.cooldown = cd
+                            repro.max_cooldown = cd
+                        child_frac = self.config.energy.asexual_child_energy_fraction
+                        new_eid = create_organism(self.em, child_genome, cx, cy, self.config, child_frac, parent_sum, self.entity_data, origin=1, parent_eid=eid)
+                        self.newborn_entities.append((new_eid, cx, cy))
+                        self.births_asexual_tick += 1
+                        newborn_count += 1
                     continue
                 partner_genome_comp = self.em.get_component(partner_id, GenomeComp)
                 if partner_genome_comp and partner_genome_comp.genome:
@@ -493,6 +517,24 @@ class ReproductionSystem(System):
             else:
                 partner_id = self._find_partner(eid, pos, diet.diet_type)
                 if partner_id is None:
+                    if random.random() < 0.01:
+                        child_genome = genome_comp.genome.mutate(self.config)
+                        parent_sum = energy.current
+                        spread = self.config.carnivorous_plant.spawn_spread if diet.diet_type == DietType.CARNIVOROUS_PLANT else 5.0
+                        cx = pos.x + random.uniform(-spread, spread)
+                        cy = pos.y + random.uniform(-spread, spread)
+                        cx = max(0.0, min(float(w.width - 1), cx))
+                        cy = max(0.0, min(float(w.height - 1), cy))
+                        cost = self.config.energy.asexual_reproduction_energy_cost
+                        energy.current *= (1.0 - cost)
+                        cd = self.config.reproduction.sexual_cooldown
+                        repro.cooldown = cd
+                        repro.max_cooldown = cd
+                        child_frac = self.config.energy.asexual_child_energy_fraction
+                        new_eid = create_organism(self.em, child_genome, cx, cy, self.config, child_frac, parent_sum, self.entity_data, origin=1, parent_eid=eid)
+                        self.newborn_entities.append((new_eid, cx, cy))
+                        self.births_asexual_tick += 1
+                        newborn_count += 1
                     continue
                 partner_genome_comp = self.em.get_component(partner_id, GenomeComp)
                 if partner_genome_comp and partner_genome_comp.genome:

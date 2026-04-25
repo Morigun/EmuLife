@@ -19,8 +19,8 @@ class SimulationConfig:
 @dataclass
 class GenomeConfig:
     genome_length: int = 16
-    mutation_rate: float = 0.1
-    mutation_strength: float = 0.1
+    mutation_rate: float = 0.20
+    mutation_strength: float = 0.25
 
 
 @dataclass

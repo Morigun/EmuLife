@@ -69,10 +69,9 @@ def energy_update_kernel(
     biomass,
     food_values, tile_types, n, width, height, dt, energy_from_food,
     metabolism_mod, efficiency_mod,
-    photosynth, food_regen_mult
+    photosynth, food_regen_mult,
+    _entity_count, _tile_depletion
 ):
-    total_tiles = width * height
-
     for i in range(n):
         if not alive[i]:
             continue
@@ -111,15 +110,18 @@ def energy_update_kernel(
             photo *= 0.8 * dt
             energy[i] += photo
 
-    entity_count = np.zeros(total_tiles, dtype=np.float32)
+    total_tiles = width * height
+    for t in range(total_tiles):
+        _entity_count[t] = 0.0
+        _tile_depletion[t] = 0.0
+
     for i in range(n):
         if not alive[i]:
             continue
         ix = min(max(int(x[i]), 0), width - 1)
         iy = min(max(int(y[i]), 0), height - 1)
-        entity_count[iy * width + ix] += 1.0
+        _entity_count[iy * width + ix] += 1.0
 
-    tile_depletion = np.zeros(total_tiles, dtype=np.float32)
     for i in range(n):
         if not alive[i]:
             continue
@@ -139,22 +141,22 @@ def energy_update_kernel(
         )
 
         if can_eat:
-            count = entity_count[iy * width + ix]
+            count = _entity_count[iy * width + ix]
             share = food / count if count > 0 else food
             eat_amount = min(energy_from_food * dt, share)
             herb_bonus = 1.3 if diet_type[i] == 0 else 1.0
             energy[i] += eat_amount * efficiency[i] * efficiency_mod[i] * herb_bonus
-            tile_depletion[iy * width + ix] += eat_amount
+            _tile_depletion[iy * width + ix] += eat_amount
 
     for i in range(n):
         if alive[i]:
             ix = min(max(int(x[i]), 0), width - 1)
             iy = min(max(int(y[i]), 0), height - 1)
             tidx = iy * width + ix
-            d = tile_depletion[tidx]
+            d = _tile_depletion[tidx]
             if d > 0:
                 food_values[iy, ix] -= d
-                tile_depletion[tidx] = 0.0
+                _tile_depletion[tidx] = 0.0
                 if food_values[iy, ix] < 0:
                     food_values[iy, ix] = 0.0
 
@@ -173,12 +175,9 @@ def energy_update_kernel(
 @njit(parallel=True, cache=True)
 def movement_update_kernel(
     x, y, dx_arr, dy_arr, habitat, alive, diet_type,
-    tile_types, n, width, height, dt
+    tile_types, n, width, height, dt,
+    moved, old_x_out, old_y_out
 ):
-    moved = np.zeros(n, dtype=np.bool_)
-    old_x_out = np.empty(n, dtype=np.float32)
-    old_y_out = np.empty(n, dtype=np.float32)
-
     for i in prange(n):
         old_x_out[i] = x[i]
         old_y_out[i] = y[i]
@@ -289,6 +288,9 @@ if HAS_NUMBA:
 
         photosynth_arr = np.zeros(n, dtype=np.float32)
 
+        ws_entity_count = np.zeros(100, dtype=np.float32)
+        ws_tile_depletion = np.zeros(100, dtype=np.float32)
+
         energy_update_kernel(
             f32.copy(), f32.copy(), dx.copy(), dy.copy(),
             energy.copy(), max_e.copy(), metab.copy(), size_g.copy(),
@@ -297,11 +299,13 @@ if HAS_NUMBA:
             food.copy(), tiles.copy(), n, 10, 10, 1.0, 15.0,
             eff.copy(), eff.copy(),
             photosynth_arr.copy(), 1.0,
+            ws_entity_count, ws_tile_depletion,
         )
 
         movement_update_kernel(
             f32.copy(), f32.copy(), dx.copy(), dy.copy(),
             i8.copy(), bool_arr.copy(), i8.copy(), tiles.copy(), n, 10, 10, 1.0,
+            np.zeros(n, dtype=np.bool_), np.empty(n, dtype=np.float32), np.empty(n, dtype=np.float32),
         )
 
         find_nearest_food_kernel(

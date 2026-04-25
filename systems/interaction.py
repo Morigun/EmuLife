@@ -26,9 +26,6 @@ class InteractionSystem(System):
             self._update_ecs(world, dt)
 
     def _update_soa(self, world: object, dt: float) -> None:
-        from components.health import Health
-        from components.energy import Energy
-
         ed = self.entity_data
         n = ed.count
         _nearby = self._nearby_set
@@ -81,7 +78,7 @@ class InteractionSystem(System):
                 ed.health[n_idx] -= damage
 
                 from components.conditions import Condition, Conditions
-                if diet_int == 2 and damage > 3.0:
+                if damage > 3.0:
                     target_conds = self.em.get_component(nid, Conditions)
                     if target_conds is None:
                         target_conds = Conditions()
@@ -92,26 +89,12 @@ class InteractionSystem(System):
                             Condition("wound", wound_duration, speed_mult=0.7, metabolism_mult=1.3)
                         )
 
-                if diet_int == 2:
-                    blood_meal = damage * self.config.energy.blood_meal_fraction
-                    ed.energy[idx] = min(float(ed.max_energy[idx]) * 1.5, float(ed.energy[idx]) + blood_meal)
-                    a_energy = self.em.get_component(eid, Energy)
-                    if a_energy:
-                        a_energy.current = float(ed.energy[idx])
-
-                n_health = self.em.get_component(nid, Health)
-                if n_health:
-                    n_health.current = float(ed.health[n_idx])
+                blood_meal = damage * self.config.energy.blood_meal_fraction
+                ed.energy[idx] = min(float(ed.max_energy[idx]) * 1.5, float(ed.energy[idx]) + blood_meal)
 
                 if ed.health[n_idx] <= 0:
                     gain = float(ed.energy[n_idx]) * self.config.energy.predation_efficiency
                     ed.energy[idx] = min(float(ed.max_energy[idx]) * 1.5, float(ed.energy[idx]) + gain + 30.0)
-                    n_energy = self.em.get_component(nid, Energy)
-                    if n_energy:
-                        n_energy.current = float(ed.energy[n_idx])
-                    a_energy = self.em.get_component(eid, Energy)
-                    if a_energy:
-                        a_energy.current = float(ed.energy[idx])
 
         cpc = self.config.carnivorous_plant
         trap_cd = cpc.trap_cooldown_ticks
@@ -170,16 +153,9 @@ class InteractionSystem(System):
                             Condition("trapped", trap_duration, speed_mult=0.1, metabolism_mult=1.0)
                         )
 
-                n_health = self.em.get_component(nid, Health)
-                if n_health:
-                    n_health.current = float(ed.health[n_idx])
-
                 if ed.health[n_idx] <= 0:
                     gain = float(ed.energy[n_idx]) * self.config.energy.predation_efficiency
                     ed.energy[idx] = min(float(ed.max_energy[idx]) * 1.5, float(ed.energy[idx]) + gain + 30.0)
-                    a_energy = self.em.get_component(eid, Energy)
-                    if a_energy:
-                        a_energy.current = float(ed.energy[idx])
 
     def _update_ecs(self, world: object, dt: float) -> None:
         import math

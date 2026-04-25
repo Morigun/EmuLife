@@ -16,6 +16,9 @@ class MovementSystem(System):
         self.moved_mask: np.ndarray | None = None
         self.old_x: np.ndarray | None = None
         self.old_y: np.ndarray | None = None
+        self._moved = np.zeros(EntityData.MAX_ENTITIES, dtype=np.bool_)
+        self._old_x = np.empty(EntityData.MAX_ENTITIES, dtype=np.float32)
+        self._old_y = np.empty(EntityData.MAX_ENTITIES, dtype=np.float32)
 
     def update(self, world: object, dt: float) -> None:
         if self.entity_data is None:
@@ -32,6 +35,7 @@ class MovementSystem(System):
             moved, old_x, old_y = movement_update_kernel(
                 ed.x, ed.y, ed.dx, ed.dy, ed.habitat, ed.alive, ed.diet_type,
                 w.tile_types, n, w.width, w.height, dt,
+                self._moved, self._old_x, self._old_y,
             )
             self.moved_mask = moved
             self.old_x = old_x
