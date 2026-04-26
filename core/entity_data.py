@@ -96,7 +96,7 @@ class EntityData:
         if diet == 2:
             child_energy = max_energy * config.energy.predator_child_energy_fraction
         elif diet == 3:
-            child_energy = max_energy * 0.5
+            child_energy = max_energy * energy_fraction
         else:
             child_energy = max_energy * energy_fraction
 

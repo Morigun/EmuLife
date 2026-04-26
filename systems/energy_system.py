@@ -31,6 +31,7 @@ class EnergySystem(System):
         w: World = world
         ed = self.entity_data
         ec = self.config.energy
+        cpc = self.config.carnivorous_plant
         n = ed.count
 
         if HAS_NUMBA:
@@ -44,6 +45,7 @@ class EnergySystem(System):
                 n, w.width, w.height, dt, ec.energy_from_food,
                 ed.metabolism_mod, ed.efficiency_mod,
                 ed.photosynth, w.food_regen_mult,
+                cpc.night_dormancy_mult, cpc.photosynth_night_mult,
                 self._entity_count, self._tile_depletion,
             )
             return
@@ -87,7 +89,8 @@ class EnergySystem(System):
         if np.any(plant_alive):
             tile_t = w.tile_types[iy, ix]
             biome_bonus = np.where(tile_t == 2, 1.3, np.where(tile_t == 3, 0.3, 1.0)).astype(np.float32)
-            photo_income = ed.photosynth[s] * w.food_regen_mult * biome_bonus * self.config.carnivorous_plant.photosynth_base_rate * dt
+            photo_mult = cpc.photosynth_night_mult if w.food_regen_mult < 0.5 else w.food_regen_mult
+            photo_income = ed.photosynth[s] * photo_mult * biome_bonus * cpc.photosynth_base_rate * dt
             ed.energy[s] += np.where(plant_alive, photo_income, 0).astype(np.float32)
 
         non_pred = ed.diet_type[s] != 2
@@ -201,7 +204,8 @@ class EnergySystem(System):
                 biome_bonus = 1.3 if tile_t == 2 else (0.3 if tile_t == 3 else 1.0)
                 genome_comp = self.em.get_component(eid, GenomeComp)
                 photo_eff = genome_comp.genome.photosynth if genome_comp and genome_comp.genome else 0.5
-                photo_income = photo_eff * w.food_regen_mult * biome_bonus * self.config.carnivorous_plant.photosynth_base_rate * dt
+                photo_mult = self.config.carnivorous_plant.photosynth_night_mult if w.food_regen_mult < 0.5 else w.food_regen_mult
+                photo_income = photo_eff * photo_mult * biome_bonus * self.config.carnivorous_plant.photosynth_base_rate * dt
                 energy.current += photo_income
 
             if diet is None or (diet.diet_type != DietType.PREDATOR and diet.diet_type != DietType.CARNIVOROUS_PLANT):

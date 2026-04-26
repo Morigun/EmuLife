@@ -70,6 +70,7 @@ def energy_update_kernel(
     food_values, tile_types, n, width, height, dt, energy_from_food,
     metabolism_mod, efficiency_mod,
     photosynth, food_regen_mult,
+    plant_night_dormancy, plant_photo_night_mult,
     _entity_count, _tile_depletion
 ):
     for i in range(n):
@@ -82,9 +83,9 @@ def energy_update_kernel(
         if diet_type[i] == 2:
             cost = cost * 0.5
         if diet_type[i] == 3:
-            plant_metab = 0.4
+            plant_metab = 0.5
             if food_regen_mult < 0.5:
-                plant_metab *= 0.3
+                plant_metab *= plant_night_dormancy
             cost *= plant_metab
         cost *= metabolism_mod[i]
         energy[i] -= cost
@@ -101,13 +102,17 @@ def energy_update_kernel(
         if diet_type[i] == 3:
             ix = min(max(int(x[i]), 0), width - 1)
             iy = min(max(int(y[i]), 0), height - 1)
-            photo = photosynth[i] * food_regen_mult
+            if food_regen_mult < 0.5:
+                photo_mult = plant_photo_night_mult
+            else:
+                photo_mult = food_regen_mult
+            photo = photosynth[i] * photo_mult
             tt = tile_types[iy, ix]
             if tt == 2:
                 photo *= 1.3
             elif tt == 3:
                 photo *= 0.3
-            photo *= 0.8 * dt
+            photo *= 0.5 * dt
             energy[i] += photo
 
     total_tiles = width * height
@@ -165,7 +170,7 @@ def energy_update_kernel(
             if diet_type[i] == 2:
                 cap = max_energy[i] * 1.5
             elif diet_type[i] == 3:
-                cap = max_energy[i] * 1.5
+                cap = max_energy[i]
             else:
                 cap = max_energy[i]
             if energy[i] > cap:
@@ -299,6 +304,7 @@ if HAS_NUMBA:
             food.copy(), tiles.copy(), n, 10, 10, 1.0, 15.0,
             eff.copy(), eff.copy(),
             photosynth_arr.copy(), 1.0,
+            0.6, 0.1,
             ws_entity_count, ws_tile_depletion,
         )
 

@@ -98,15 +98,15 @@ class DayNightConfig:
 class CarnivorousPlantConfig:
     trap_base_radius: float = 8.0
     trap_max_radius: float = 20.0
-    trap_damage_mult: float = 50.0
+    trap_damage_mult: float = 30.0
     trap_cooldown_ticks: int = 20
-    photosynth_base_rate: float = 0.8
-    photosynth_night_mult: float = 0.3
+    photosynth_base_rate: float = 0.5
+    photosynth_night_mult: float = 0.1
     spawn_spread: float = 3.0
     max_trap_targets: int = 3
-    metabolism_mult: float = 0.4
-    night_dormancy_mult: float = 0.3
-    energy_cap_mult: float = 1.5
+    metabolism_mult: float = 0.5
+    night_dormancy_mult: float = 0.7
+    energy_cap_mult: float = 1.0
 
 
 @dataclass

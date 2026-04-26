@@ -155,7 +155,7 @@ class InteractionSystem(System):
 
                 if ed.health[n_idx] <= 0:
                     gain = float(ed.energy[n_idx]) * self.config.energy.predation_efficiency
-                    ed.energy[idx] = min(float(ed.max_energy[idx]) * 1.5, float(ed.energy[idx]) + gain + 30.0)
+                    ed.energy[idx] = min(float(ed.max_energy[idx]) * cpc.energy_cap_mult, float(ed.energy[idx]) + gain + 30.0)
 
     def _update_ecs(self, world: object, dt: float) -> None:
         import math
@@ -222,7 +222,7 @@ class InteractionSystem(System):
                             if n_health and n_health.current <= 0:
                                 n_energy = self.em.get_component(nid, Energy)
                                 gain = (n_energy.current * self.config.energy.predation_efficiency) if n_energy else 0
-                                energy.current = min(energy.max_value * 1.5, energy.current + gain + 30.0)
+                                energy.current = min(energy.max_value * self.config.carnivorous_plant.energy_cap_mult, energy.current + gain + 30.0)
                                 if self.entity_data is not None:
                                     a_idx = self.entity_data.eid_to_idx.get(eid)
                                     if a_idx is not None:
